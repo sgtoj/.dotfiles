@@ -1,0 +1,17 @@
+[user]
+    name = Brian Ojeda
+    email = 9335829+sgtoj@users.noreply.github.com
+    signingkey = 479D7F278CA8ED0051094BCC2AE28BC21E81C2A2
+
+[commit]
+    gpgSign = true
+
+[includeIf "gitdir:~/repo/mpz/"]
+    path = ~/repo/mpz/.gitconfig
+
+[credential]
+	helper =
+	helper = /usr/local/share/gcm-core/git-credential-manager
+
+[credential "https://dev.azure.com"]
+	useHttpPath = true

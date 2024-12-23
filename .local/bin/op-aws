@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+
+# ------------------------------------------------------------ configuration ---
+
+OP_VAULT="Private"
+OP_ITEM_NAME="AWS Config"
+AWS_CONFIG_PATH="$HOME/.aws/config"
+
+# ---------------------------------------------------------------------- fns ---
+
+push_config() {
+  if [ ! -f "$AWS_CONFIG_PATH" ]; then
+    echo "aws config file not found at $AWS_CONFIG_PATH"
+    exit 1
+  fi
+
+  # read the aws config file
+  CONFIG_CONTENT=$(<"$AWS_CONFIG_PATH")
+
+  # update existing item if exists; otherwise create
+  ITEM_ID=$(op item list --vault="$OP_VAULT" --format=json | jq -r ".[] | select(.title==\"$OP_ITEM_NAME\") | .id")
+  if [ -n "$ITEM_ID" ]; then
+    op item edit "$ITEM_ID" --vault="$OP_VAULT" "notesPlain=$CONFIG_CONTENT"
+    echo "updated aws config in 1password"
+  else
+    op item create --vault="$OP_VAULT" --category="Secure Note" --title="$OP_ITEM_NAME" note="$CONFIG_CONTENT"
+    echo "pushed aws config to 1password"
+  fi
+}
+
+
+pull_config() {
+  CONFIG_CONTENT=$(op item get "$OP_ITEM_NAME" --vault="$OP_VAULT" --format=json | jq -r '.fields[] | select(.label=="note").value')
+
+  if [ -z "$CONFIG_CONTENT" ]; then
+    echo "aws config not found in 1password"
+    exit 1
+  fi
+
+  mkdir -p "$(dirname "$AWS_CONFIG_PATH")"
+  echo "$CONFIG_CONTENT" > "$AWS_CONFIG_PATH"
+  echo "pulled aws config from 1password to $AWS_CONFIG_PATH"
+}
+
+# ------------------------------------------------------------------- script ---
+
+# requires: op, jq
+for cmd in op jq; do
+  command -v "$cmd" >/dev/null || { echo "$cmd not found"; exit 1; }
+done
+
+[ $# -ne 1 ] && { echo "Usage: $0 {push|pull}"; exit 1; }
+
+case "$1" in
+  push) push_config ;;
+  pull) pull_config ;;
+  *) echo "Usage: $0 {push|pull}"; exit 1 ;;
+esac
+

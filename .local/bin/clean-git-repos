@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# ------------------------------------------------------------ configuration ---
+
+# path to repositories
+REPO_BASE="$HOME/repos"
+
+# ---------------------------------------------------------------------- fns ---
+
+log() {
+  echo -e "\033[1;32m[I] $1\033[0m"
+}
+
+log_error() {
+  echo -e "\033[1;31m[E] $1\033[0m" >&2
+}
+
+clean_git_repo() {
+  local repo_path="$1"
+  log "cleaning repository: $repo_path"
+
+  # navigate to the repo directory
+  cd "$repo_path" || {
+    log_error "could not access $repo_path"
+    return
+  }
+
+  # fetch and prune stale branches
+  git fetch --prune || {
+    log_error "failed to fetch and prune in $repo_path"
+    return
+  }
+
+  # remove untracked files and directories
+  git clean -fdx || {
+    log_error "failed to clean untracked files in $repo_path"
+    return
+  }
+
+  # garbage collect and optimize
+  git gc --aggressive --prune=now || {
+    log_error "failed to run git gc in $repo_path"
+    return
+  }
+
+  log "Completed cleaning: $repo_path"
+}
+
+
+# ------------------------------------------------------------------- script ---
+
+# iterate over repositories 2 levels deep
+find "$REPO_BASE" -mindepth 2 -maxdepth 2 -type d -name ".git" | while read -r git_dir; do
+  repo_dir=$(dirname "$git_dir")
+  clean_git_repo "$repo_dir"
+done
+
+log "all repositories cleaned!"

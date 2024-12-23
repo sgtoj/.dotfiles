@@ -1,0 +1,5 @@
+.aws/cli
+.aws/sso
+.aws/config
+.config/op
+

@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+
+# ---------------------------------------------------------------------- fns ---
+
+function get_fzf_path() {
+  local fzf_path
+  fzf_path=$(which fzf || true)
+  if [ -d "${HOME}/repos/gh/fzf/bin/" ]; then
+    fzf_path="${HOME}/repos/gh/fzf/bin/fzf"
+  fi
+  if [ ! -f "${fzf_path}" ]; then
+    echo "ERROR: fzf not found"
+    exit 0
+  fi
+  echo "${fzf_path}"
+}
+
+function exec_fzf() {
+  local fzf_path
+  fzf_path=$(get_fzf_path)
+
+  $fzf_path \
+     --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \
+     --color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc \
+     --color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8 \
+     --color=selected-bg:#45475a \
+     --border="rounded" \
+     --multi \
+     "${@}"
+}
+
+# ------------------------------------------------------------------- script ---
+
+if [[ $# -eq 1 ]]; then
+  selected=$1
+else
+  selected=$(
+    {
+      find ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp -mindepth 1 -maxdepth 1 -type d
+      echo "$HOME/.dotfiles"
+    } | exec_fzf --tmux center
+  )
+fi
+
+if [[ -z $selected ]]; then
+  exit 0
+fi
+
+# generate session name
+parent_name=$(basename "$(dirname "$selected")")
+base_name=$(basename "$selected" | tr . _)
+selected_name="${parent_name}-${base_name}"
+
+# overides for generated session names
+if [[ "$base_name" == "_dotfiles" ]]; then
+  selected_name="dotfiles"
+fi
+
+tmux_running=$(pgrep tmux)
+
+if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
+  tmux new-session -s $selected_name -c $selected
+  exit 0
+fi
+
+if ! tmux has-session -t=$selected_name 2> /dev/null; then
+  tmux new-session -ds $selected_name -c $selected
+fi
+
+tmux switch-client -t $selected_name
+
