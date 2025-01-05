@@ -24,7 +24,6 @@ BREW_PACKAGES=(
   fzf
   git
   gh
-  ghostty
   go
   htop
   imagemagick
@@ -111,6 +110,9 @@ done
 
 # install cask packages
 for cask in "${BREW_CASK_PACKAGES[@]}"; do
+  if [[ $OSTYPE != "darwin"* ]]; then
+    continue
+  fi
   if ! brew list --cask "$cask" &> /dev/null; then
     log "installing $cask"
     brew install --cask "$cask"
