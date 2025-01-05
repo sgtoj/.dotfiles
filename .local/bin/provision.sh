@@ -20,6 +20,7 @@ BREW_PACKAGES=(
   awscli
   bash
   bat
+  clang
   eza
   deno
   fd
