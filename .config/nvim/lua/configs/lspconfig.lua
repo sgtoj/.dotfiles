@@ -7,6 +7,7 @@ local servers = {
   bashls = {},
   cssls = {},
   eslint = {},
+  gopls = {},
   html = {},
   terraformls = {},
   tilt_ls = {},

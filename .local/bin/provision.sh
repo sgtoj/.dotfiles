@@ -2,7 +2,10 @@
 
 # ------------------------------------------------------------ configuration ---
 
-ARKADE_PACKAGES=(
+ARKADE_SYSTEM_PACKAGES=(
+)
+
+ARKADE_TOOL_PACKAGES=(
   k9s
   kubectl
   kubeseal
@@ -21,6 +24,9 @@ BREW_PACKAGES=(
   fzf
   git
   gh
+  ghostty
+  go
+  htop
   imagemagick
   jq
   lazygit
@@ -39,9 +45,11 @@ BREW_PACKAGES=(
 
 BREW_CASK_PACKAGES=(
   1password-cli
+  docker
   font-hack-nerd-font
+  ghostty
   git-credential-manager
-  wezterm
+  nikitabobko/tap/aerospace
 )
 
 DIRECTORIES_TO_CREATE=(
@@ -127,15 +135,26 @@ else
   log "arkade already installed"
 fi
 
-# install arkade packages
-for arkade_package in "${ARKADE_PACKAGES[@]}"; do
+# install arkade system packages
+for arkade_package in "${ARKADE_SYSTEM_PACKAGES[@]}"; do
+  log "installing arkade package $arkade_package"
+  arkade system install "$arkade_package"
+  if [[ $? -ne 0 ]]; then
+    log_error "failed to install arkade system package $arkade_package"
+    exit 1
+  fi
+  log "arkade system package $arkade_package installed"
+done
+
+# install arkade tool packages
+for arkade_package in "${ARKADE_TOOL_PACKAGES[@]}"; do
   log "installing arkade package $arkade_package"
   arkade get "$arkade_package"
   if [[ $? -ne 0 ]]; then
-    log_error "failed to install arkade package $arkade_package"
+    log_error "failed to install arkade tool package $arkade_package"
     exit 1
   fi
-  log "arkade package $arkade_package installed"
+  log "arkade tool package $arkade_package installed"
 done
 
 # create directories if they don't exist

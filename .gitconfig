@@ -6,8 +6,8 @@
 [commit]
     gpgSign = true
 
-[includeIf "gitdir:~/repo/mpz/"]
-    path = ~/repo/mpz/.gitconfig
+[init]
+	defaultBranch = main
 
 [credential]
 	helper =
@@ -15,3 +15,7 @@
 
 [credential "https://dev.azure.com"]
 	useHttpPath = true
+
+[includeIf "gitdir:~/repo/mpz/"]
+    path = ~/repo/mpz/.gitconfig
+

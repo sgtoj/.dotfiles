@@ -1,0 +1,6 @@
+font-feature = -calt
+font-feature = -liga
+font-feature = -dlig
+macos-titlebar-proxy-icon = hidden
+title = " "
+theme = catppuccin-mocha
