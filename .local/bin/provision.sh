@@ -75,6 +75,10 @@ log_error() {
 # ------------------------------------------------------------------- script ---
 
 # check and install homebrew if not already installed
+BREW_PREFIX=/opt/homebrew
+if [[ $OSTYPE != "darwin"* ]]; then
+  BREW_PREFIX=/home/linuxbrew
+fi
 if ! command -v brew &> /dev/null; then
   log "installing homebrew"
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -83,12 +87,11 @@ if ! command -v brew &> /dev/null; then
     exit 1
   fi
   echo >> "$HOME/.zprofile"
-  echo 'eval "$($(brew --prefix)/bin/brew shellenv)"' >> "$HOME/.zprofile"
-  eval "$($(brew --prefix)/bin/brew shellenv)"
+  echo "eval \"\$($BREW_PREFIX/bin/brew shellenv)\"" >> "$HOME/.zprofile"
 else
   log "homebrew already installed"
-  eval "$($(brew --prefix)/bin/brew shellenv)"
 fi
+eval "$($BREW_PREFIX/bin/brew shellenv)"
 
 # ensure homebrew is up to date
 log "updating homebrew"
