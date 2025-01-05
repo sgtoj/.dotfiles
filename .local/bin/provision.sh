@@ -3,6 +3,7 @@
 # ------------------------------------------------------------ configuration ---
 
 APT_PACKAGES=(
+  clang
   zsh
 )
 
@@ -20,7 +21,6 @@ BREW_PACKAGES=(
   awscli
   bash
   bat
-  clang
   eza
   deno
   fd
@@ -110,7 +110,6 @@ for package in "${BREW_PACKAGES[@]}"; do
     brew install "$package"
     if [[ $? -ne 0 ]]; then
       log_error "failed to install $package"
-      exit 1
     fi
   else
     log "$package is already installed"
