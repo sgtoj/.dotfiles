@@ -20,7 +20,6 @@ BREW_PACKAGES=(
   deno
   fd
   ffmpeg
-  font-symbols-only-nerd-font
   fzf
   git
   gh
@@ -46,6 +45,7 @@ BREW_CASK_PACKAGES=(
   1password-cli
   docker
   font-hack-nerd-font
+  font-symbols-only-nerd-font
   ghostty
   git-credential-manager
   nikitabobko/tap/aerospace
