@@ -42,13 +42,14 @@ A personal collection of configuration files managed with [GNU Stow](https://www
 
 --------------------------------------------------------------------------------
 
-## MacOS Provisioning Script
+## MacOS (and Linux) Provisioning Script
 
-The `./.local/bin/provision.sh` script provisions a new MacBook with essential
-tools and configurations terminal centric workflow and development. It is
-designed to be **idempotent**, meaning it is safe to run multiple times.
+The [`./.local/bin/provision.sh`](./.local/bin/provision.sh) script provisions a
+new MacBook with essential tools and configurations terminal centric workflow
+and development. It is designed to be **idempotent**, meaning it is safe to run
+multiple times.
 
-## Instructions
+### Instructions
 
 1. Run the script directly from your terminal using:
 
@@ -58,7 +59,7 @@ designed to be **idempotent**, meaning it is safe to run multiple times.
 
 2. Save SSH keys in 1Password to `~/.ssh`
 
-3. Open WezTerm and signin to 1Password CLI and GitHub CLI
+3. Open a terminal (Ghostty) and signin to 1Password CLI and GitHub CLI
 
     ```
     eval $(op signin)
