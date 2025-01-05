@@ -49,6 +49,11 @@ new MacBook with essential tools and configurations terminal centric workflow
 and development. It is designed to be **idempotent**, meaning it is safe to run
 multiple times.
 
+_This script was originally designed to run on MacOS, but works on linux too. It
+has been used on (WSL) Ubuntu 24. None of the `brew` casts work on Linux, so use
+`apt` as an alteritive. Additionally, must set the default shell to `zsh` after
+script is completed since `chsh` does not work from script._
+
 ### Instructions
 
 1. Run the script directly from your terminal using:
@@ -75,4 +80,10 @@ multiple times.
     ```
 
 5. Open `nvim` and install LSPs using `:MasonInstallAll`
+
+6. Change shell to `zsh` if Linux.
+
+    ```
+    chsh -s /bin/zsh
+    ```
 

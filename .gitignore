@@ -1,5 +1,8 @@
 .aws/cli
 .aws/sso
 .aws/config
+.config/gh
+.config/go/telemetry
 .config/op
-
+.local/share
+.local/state

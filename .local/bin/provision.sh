@@ -2,6 +2,10 @@
 
 # ------------------------------------------------------------ configuration ---
 
+APT_PACKAGES=(
+  zsh
+)
+
 ARKADE_SYSTEM_PACKAGES=(
 )
 
@@ -28,6 +32,7 @@ BREW_PACKAGES=(
   imagemagick
   jq
   lazygit
+  neovim
   nvm
   poppler
   ripgrep
@@ -125,6 +130,23 @@ for cask in "${BREW_CASK_PACKAGES[@]}"; do
     fi
   else
     log "$cask is already installed"
+  fi
+done
+
+# install apt packages
+for package in "${APT_PACKAGES[@]}"; do
+  if [[ $OSTYPE == "darwin"* ]]; then
+    continue
+  fi
+  if ! command -v $package &> /dev/null; then
+    log "installing $package"
+    sudo apt install "$package"
+    if [[ $? -ne 0 ]]; then
+      log_error "failed to install $package"
+      exit 1
+    fi
+  else
+    log "$package is already installed"
   fi
 done
 
