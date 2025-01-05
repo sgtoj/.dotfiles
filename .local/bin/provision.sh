@@ -77,7 +77,7 @@ log_error() {
 # check and install homebrew if not already installed
 BREW_PREFIX=/opt/homebrew
 if [[ $OSTYPE != "darwin"* ]]; then
-  BREW_PREFIX=/home/linuxbrew
+  BREW_PREFIX=/home/linuxbrew/.linuxbrew
 fi
 if ! command -v brew &> /dev/null; then
   log "installing homebrew"
