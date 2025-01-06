@@ -15,6 +15,7 @@ ARKADE_TOOL_PACKAGES=(
   kubectl
   kubeseal
   kustomize
+  op
 )
 
 BREW_PACKAGES=(
@@ -126,7 +127,6 @@ for cask in "${BREW_CASK_PACKAGES[@]}"; do
     brew install --cask "$cask"
     if [[ $? -ne 0 ]]; then
       log_error "failed to install $cask"
-      exit 1
     fi
   else
     log "$cask is already installed"
@@ -143,7 +143,6 @@ for package in "${APT_PACKAGES[@]}"; do
     sudo apt install "$package"
     if [[ $? -ne 0 ]]; then
       log_error "failed to install $package"
-      exit 1
     fi
   else
     log "$package is already installed"
@@ -168,7 +167,6 @@ for arkade_package in "${ARKADE_SYSTEM_PACKAGES[@]}"; do
   arkade system install "$arkade_package"
   if [[ $? -ne 0 ]]; then
     log_error "failed to install arkade system package $arkade_package"
-    exit 1
   fi
   log "arkade system package $arkade_package installed"
 done
@@ -179,7 +177,6 @@ for arkade_package in "${ARKADE_TOOL_PACKAGES[@]}"; do
   arkade get "$arkade_package"
   if [[ $? -ne 0 ]]; then
     log_error "failed to install arkade tool package $arkade_package"
-    exit 1
   fi
   log "arkade tool package $arkade_package installed"
 done
@@ -191,7 +188,6 @@ for dir in "${DIRECTORIES_TO_CREATE[@]}"; do
     mkdir -p "$dir"
     if [[ $? -ne 0 ]]; then
       log_error "failed to create directory $dir"
-      exit 1
     fi
   else
     log "directory $dir already exists"
@@ -230,7 +226,6 @@ if command -v nvm &> /dev/null; then
   nvm install --lts
   if [[ $? -ne 0 ]]; then
     log_error "failed to install latest node lts"
-    exit 1
   fi
   log "setting latest node lts as default"
   nvm alias default lts/*

@@ -49,10 +49,10 @@ new MacBook with essential tools and configurations terminal centric workflow
 and development. It is designed to be **idempotent**, meaning it is safe to run
 multiple times.
 
-_This script was originally designed to run on MacOS, but works on linux too. It
-has been used on (WSL) Ubuntu 24. None of the `brew` casts work on Linux, so use
-`apt` as an alteritive. Additionally, must set the default shell to `zsh` after
-script is completed since `chsh` does not work from script._
+_This script was originally designed to run on MacOS, but works on debian or
+ubuntu too. It has been used on (WSL) Ubuntu 24. However, none of the `brew`
+casts are supported, so uses `apt` as an alternative. Finally, setting `zsh` as
+the default shell must be done manually since `chsh` does not work from script._
 
 ### Instructions
 
