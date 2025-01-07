@@ -16,6 +16,7 @@ ARKADE_TOOL_PACKAGES=(
   kubeseal
   kustomize
   op
+  tilt
 )
 
 BREW_PACKAGES=(
