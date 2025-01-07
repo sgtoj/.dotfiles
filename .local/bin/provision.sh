@@ -23,6 +23,7 @@ BREW_PACKAGES=(
   awscli
   bash
   bat
+  btop
   eza
   deno
   fd
@@ -31,7 +32,6 @@ BREW_PACKAGES=(
   git
   gh
   go
-  htop
   imagemagick
   jq
   lazygit
