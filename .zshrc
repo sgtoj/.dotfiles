@@ -67,13 +67,13 @@ setopt hist_find_no_dups
 unsetopt hist_save_by_copy
 
 # aliases
-alias cat=$(command -v bat >/dev/null 2>&1 && echo 'bat -n' || (command -v batcat >/dev/null 2>&1 && echo 'batcat -n' || echo cat))
+alias cat="$(command -v bat >/dev/null 2>&1 && echo 'bat -n --paging=never' || (command -v batcat >/dev/null 2>&1 && echo 'batcat -n --paging=never' || echo cat))"
 alias ls="ls --color"
 alias vim='nvim'
 
 # setup - bat
 if [ ! -d "$HOME/.cache/bat" ] && alias cat | grep 'bat'; then
-  cat cache --build
+  bat cache --build
 fi
 
 # setup - node version manager (nvm)
