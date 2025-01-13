@@ -1,7 +1,7 @@
 export XDG_CACHE_HOME=${HOME}/.cache
 export XDG_CONFIG_HOME=${HOME}/.config
 export XDG_DATA_HOME=${HOME}/.local/share
-export PATH=/opt/nvim/bin:${HOME}/repos/gh/fzf/bin:${HOME}/.local/bin:${HOME}/.arkade/bin/:${PATH}
+export PATH=/opt/nvim/bin:${HOME}/.local/bin:${HOME}/go/bin:${HOME}/.arkade/bin/:${PATH}
 
 export BAT_THEME="Catppuccin Mocha"
 export FZF_DEFAULT_OPTS=" \

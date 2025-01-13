@@ -38,6 +38,7 @@ else
   selected=$(
     {
       find ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp -mindepth 1 -maxdepth 1 -type d
+      find ~/repos/scrap ~/repos/gh -mindepth 1 -maxdepth 1 -type d
       echo "$HOME/.dotfiles"
     } | exec_fzf --tmux center
   )

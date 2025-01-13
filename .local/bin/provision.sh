@@ -61,8 +61,10 @@ BREW_CASK_PACKAGES=(
 
 DIRECTORIES_TO_CREATE=(
   "$HOME/repos/cs"
+  "$HOME/repos/gh"
   "$HOME/repos/mpz"
   "$HOME/repos/pp"
+  "$HOME/repos/scrap"
   "$HOME/repos/sgtoj"
 )
 
