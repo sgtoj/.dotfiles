@@ -1,8 +1,13 @@
 local options = {
   formatters_by_ft = {
     lua = { "stylua" },
+    python = { "black" },
     -- css = { "prettier" },
     -- html = { "prettier" },
+  },
+
+  formatters = {
+    black = { prepend_args = { "--fast" } },
   },
 
   format_on_save = {

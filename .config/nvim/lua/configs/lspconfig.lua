@@ -9,6 +9,7 @@ local servers = {
   eslint = {},
   gopls = {},
   html = {},
+  pyright = {},
   terraformls = {},
   tilt_ls = {},
 
