@@ -4,6 +4,7 @@ local options = {
     -- html = { "prettier" },
     lua = { "stylua" },
     python = { "black" },
+    sh = { "shfmt" },
     terraform = { "terraform_fmt" },
   },
 

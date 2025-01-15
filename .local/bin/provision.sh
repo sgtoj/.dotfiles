@@ -91,15 +91,15 @@ BREW_PREFIX=/opt/homebrew
 if [[ $OSTYPE != "darwin"* ]]; then
   BREW_PREFIX=/home/linuxbrew/.linuxbrew
 fi
-if ! command -v brew &> /dev/null; then
+if ! command -v brew &>/dev/null; then
   log "installing homebrew"
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   if [[ $? -ne 0 ]]; then
     log_error "failed to install homebrew"
     exit 1
   fi
-  echo >> "$HOME/.zprofile"
-  echo "eval \"\$($BREW_PREFIX/bin/brew shellenv)\"" >> "$HOME/.zprofile"
+  echo >>"$HOME/.zprofile"
+  echo "eval \"\$($BREW_PREFIX/bin/brew shellenv)\"" >>"$HOME/.zprofile"
 else
   log "homebrew already installed"
 fi
@@ -111,7 +111,7 @@ brew update
 
 # install essential packages
 for package in "${BREW_PACKAGES[@]}"; do
-  if ! brew list "$package" &> /dev/null; then
+  if ! brew list "$package" &>/dev/null; then
     log "installing $package"
     brew install "$package"
     if [[ $? -ne 0 ]]; then
@@ -127,7 +127,7 @@ for cask in "${BREW_CASK_PACKAGES[@]}"; do
   if [[ $OSTYPE != "darwin"* ]]; then
     continue
   fi
-  if ! brew list --cask "$cask" &> /dev/null; then
+  if ! brew list --cask "$cask" &>/dev/null; then
     log "installing $cask"
     brew install --cask "$cask"
     if [[ $? -ne 0 ]]; then
@@ -143,7 +143,7 @@ for package in "${APT_PACKAGES[@]}"; do
   if [[ $OSTYPE == "darwin"* ]]; then
     continue
   fi
-  if ! command -v $package &> /dev/null; then
+  if ! command -v $package &>/dev/null; then
     log "installing $package"
     sudo apt install "$package"
     if [[ $? -ne 0 ]]; then
@@ -155,7 +155,7 @@ for package in "${APT_PACKAGES[@]}"; do
 done
 
 # install arkade
-if ! command -v arkade &> /dev/null; then
+if ! command -v arkade &>/dev/null; then
   log "installing arkade"
   curl -sLS https://get.arkade.dev | sudo bash
   if [[ $? -ne 0 ]]; then
@@ -213,20 +213,20 @@ else
 fi
 
 log "running stow on dotfiles"
-pushd "$DOTFILES_DIR" > /dev/null
+pushd "$DOTFILES_DIR" >/dev/null
 stow .
 if [[ $? -ne 0 ]]; then
   log_error "failed to run stow on dotfiles"
-  popd > /dev/null
+  popd >/dev/null
   exit 1
 fi
-popd > /dev/null
+popd >/dev/null
 
 # install latest node lts using nvm and set as default
 NVM_INSTALL_PATH=$(brew --prefix nvm)
 export NVM_DIR="$HOME/.nvm"
 source "$NVM_INSTALL_PATH/nvm.sh"
-if command -v nvm &> /dev/null; then
+if command -v nvm &>/dev/null; then
   log "installing latest node lts using nvm"
   nvm install --lts
   if [[ $? -ne 0 ]]; then
@@ -259,7 +259,7 @@ if ! grep -q "Host github.com" "$SSH_CONFIG"; then
     echo "  HostName github.com"
     echo "  User git"
     echo "  IdentityFile ~/.ssh/$SSH_KEY_NAME_GITHUB"
-  } >> "$SSH_CONFIG"
+  } >>"$SSH_CONFIG"
 else
   log "github.com configuration already exists in ~/.ssh/config"
 fi
@@ -273,7 +273,7 @@ fi
 # set path to ghostty configuration
 if [[ "$OSTYPE" == "darwin"* ]]; then
   mkdir -p $HOME/Library/Application\ Support/com.mitchellh.ghostty
-  echo "config-file = $HOME/.config/ghostty/config" > $HOME/Library/Application\ Support/com.mitchellh.ghostty/config
+  echo "config-file = $HOME/.config/ghostty/config" >$HOME/Library/Application\ Support/com.mitchellh.ghostty/config
 fi
 
 log "provisioning complete"
