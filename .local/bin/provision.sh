@@ -16,6 +16,7 @@ ARKADE_TOOL_PACKAGES=(
   kubeseal
   kustomize
   op
+  terraform
   tilt
 )
 
@@ -35,6 +36,7 @@ BREW_PACKAGES=(
   imagemagick
   jq
   lazygit
+  libgit2
   neovim
   nvm
   poppler

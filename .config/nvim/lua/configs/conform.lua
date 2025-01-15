@@ -1,9 +1,10 @@
 local options = {
   formatters_by_ft = {
-    lua = { "stylua" },
-    python = { "black" },
     -- css = { "prettier" },
     -- html = { "prettier" },
+    lua = { "stylua" },
+    python = { "black" },
+    terraform = { "terraform_fmt" },
   },
 
   formatters = {
