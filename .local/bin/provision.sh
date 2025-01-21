@@ -58,7 +58,6 @@ BREW_CASK_PACKAGES=(
   font-symbols-only-nerd-font
   ghostty
   git-credential-manager
-  nikitabobko/tap/aerospace
 )
 
 DIRECTORIES_TO_CREATE=(
@@ -200,27 +199,29 @@ for dir in "${DIRECTORIES_TO_CREATE[@]}"; do
 done
 
 # clone dotfiles repo and run stow
-DOTFILES_DIR="$HOME/.dotfiles"
-if [[ ! -d "$DOTFILES_DIR" ]]; then
-  log "cloning dotfiles repo"
-  git clone "$DOTFILES_GIT_PATH" "$DOTFILES_DIR"
+if [ -n "$DOTFILES_GIT_PATH" ]; then
+  DOTFILES_DIR="$HOME/.dotfiles"
+  if [[ ! -d "$DOTFILES_DIR" ]]; then
+    log "cloning dotfiles repo"
+    git clone "$DOTFILES_GIT_PATH" "$DOTFILES_DIR"
+    if [[ $? -ne 0 ]]; then
+      log_error "failed to clone dotfiles repo"
+      exit 1
+    fi
+  else
+    log "dotfiles repo already cloned"
+  fi
+
+  log "running stow on dotfiles"
+  pushd "$DOTFILES_DIR" >/dev/null
+  stow .
   if [[ $? -ne 0 ]]; then
-    log_error "failed to clone dotfiles repo"
+    log_error "failed to run stow on dotfiles"
+    popd >/dev/null
     exit 1
   fi
-else
-  log "dotfiles repo already cloned"
-fi
-
-log "running stow on dotfiles"
-pushd "$DOTFILES_DIR" >/dev/null
-stow .
-if [[ $? -ne 0 ]]; then
-  log_error "failed to run stow on dotfiles"
   popd >/dev/null
-  exit 1
 fi
-popd >/dev/null
 
 # install latest node lts using nvm and set as default
 NVM_INSTALL_PATH=$(brew --prefix nvm)
@@ -252,16 +253,18 @@ if [[ ! -f "$SSH_CONFIG" ]]; then
   chmod 600 "$SSH_CONFIG"
 fi
 
-if ! grep -q "Host github.com" "$SSH_CONFIG"; then
-  log "configuring github.com key in ~/.ssh/config"
-  {
-    echo "Host github.com"
-    echo "  HostName github.com"
-    echo "  User git"
-    echo "  IdentityFile ~/.ssh/$SSH_KEY_NAME_GITHUB"
-  } >>"$SSH_CONFIG"
-else
-  log "github.com configuration already exists in ~/.ssh/config"
+if [ -n "$SSH_KEY_NAME_GITHUB" ]; then
+  if ! grep -q "Host github.com" "$SSH_CONFIG"; then
+    log "configuring github.com key in ~/.ssh/config"
+    {
+      echo "Host github.com"
+      echo "  HostName github.com"
+      echo "  User git"
+      echo "  IdentityFile ~/.ssh/$SSH_KEY_NAME_GITHUB"
+    } >>"$SSH_CONFIG"
+  else
+    log "github.com configuration already exists in ~/.ssh/config"
+  fi
 fi
 
 # set zsh as the default shell
