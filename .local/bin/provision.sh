@@ -2,10 +2,11 @@
 
 # -------------------------------------------------------------- description ---
 
-# an idempotent script to quickly provision a development environment by
-# installing essential packages and tools on macos and linux
+# an idempotent script to quickly provision a personalized development
+# environment by installing essential packages and tools with configurations
 #
 # features:
+# - works on macos and debian/ubuntu linux
 # - installs packages and binaries using brew, apt, and arkade
 # - creates directories for organizing workspaces
 # - clones and applies dotfiles using stow
@@ -50,11 +51,11 @@ BREW_PACKAGES=(
   deno        # dev tool
   fd          # alternative to find
   ffmpeg      # dependency: yazi
-  fzf         # fuzzy finder
+  fzf         # tool to fuzzy find
   git         # latest git
   gh          # dev tool: github cli
   go          # dev tool
-  imagemagic  # dependency: yazi
+  imagemagick # dependency: yazi
   jq          # dev tool
   lazygit     # terminal ui for git
   libgit2     # dependency: terraform
