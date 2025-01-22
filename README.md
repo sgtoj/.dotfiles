@@ -1,6 +1,9 @@
 # .dotfiles
 
-A personal collection of configuration files managed with [GNU Stow](https://www.gnu.org/software/stow/).
+A personal collection of dotfiles (i.e., configuration files) managed with [GNU
+Stow](https://www.gnu.org/software/stow/). Reference [dotfiles.github.io](https://dotfiles.github.com)
+or this [youtube video](https://www.youtube.com/watch?v=y6XCebnB9gs) to learn
+more about dotfiles.
 
 ## Usage
 
@@ -86,4 +89,4 @@ the default shell must be done manually since `chsh` does not work from script._
     ```
     chsh -s /bin/zsh
     ```
-
+g
