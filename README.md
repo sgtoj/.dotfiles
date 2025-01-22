@@ -89,4 +89,4 @@ the default shell must be done manually since `chsh` does not work from script._
     ```
     chsh -s /bin/zsh
     ```
-g
+

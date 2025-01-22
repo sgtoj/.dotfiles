@@ -17,7 +17,7 @@
 # ------------------------------------------------------------ configuration ---
 
 # all configuration options are centralized in this section below for easy and
-# quick modification.
+# quick modification
 
 # linux only packages
 APT_PACKAGES=(
