@@ -9,9 +9,9 @@ k9s:
     skin: catppuccin-mocha-transparent
     enableMouse: true
     headless: false
-    logoless: false
+    logoless: true
     crumbsless: false
-    reactive: false
+    reactive: true
     noIcons: false
     defaultsToFullScreen: false
   skipLatestRevCheck: false
