@@ -17,6 +17,7 @@ return {
   {
     "nvim-treesitter/nvim-treesitter",
     opts = {
+      auto_install = true,
       ensure_installed = {
         "bash",
         "css",
@@ -41,7 +42,7 @@ return {
       },
       highlight = {
         disable = {
-          "dockerfile",
+          "dockerfile", -- broken
         },
       },
     },
