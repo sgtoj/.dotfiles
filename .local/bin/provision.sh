@@ -6,7 +6,7 @@
 # installing essential packages and tools on macos and linux
 #
 # features:
-# - installs system packages, brew formulas, and arkade binaries
+# - installs packages and binaries using brew, apt, and arkade
 # - creates directories for organizing workspaces
 # - clones and applies dotfiles using stow
 # - sets up ssh for github access
@@ -67,8 +67,8 @@ BREW_PACKAGES=(
   sevenzip    # dependency: yazi
   tmux        # terminal multiplexer
   tree        # tool to display dir
-  tree-sitter # dev tool: code parser
-  yazi        # file manager
+  tree-sitter # dev tool: code parsing
+  yazi        # terminal file manager
   zoxide      # tool to navigate fs
 )
 
