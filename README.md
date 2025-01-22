@@ -1,7 +1,7 @@
 # .dotfiles
 
 A personal collection of dotfiles (i.e., configuration files) managed with [GNU
-Stow](https://www.gnu.org/software/stow/). Reference [dotfiles.github.io](https://dotfiles.github.com)
+Stow](https://www.gnu.org/software/stow/). Reference [dotfiles.github.io](https://dotfiles.github.io)
 or this [youtube video](https://www.youtube.com/watch?v=y6XCebnB9gs) to learn
 more about dotfiles.
 
