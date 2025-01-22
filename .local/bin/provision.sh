@@ -1,15 +1,31 @@
 #!/usr/bin/env bash
 
+# -------------------------------------------------------------- description ---
+
+# an idempotent script to quickly provision a development environment by
+# installing essential packages and tools on macos and linux
+#
+# features:
+# - installs system packages, brew formulas, and arkade binaries
+# - creates directories for organizing workspaces
+# - clones and applies dotfiles using stow
+# - sets up ssh for github access
+# - configures node.js via nvm
+# - switches the default shell to zsh
+# - configures ghostty on macos
+
 # ------------------------------------------------------------ configuration ---
 
+# all configuration options are centralized in this  section below for easy and
+# and quick modification.
+
+# linux only packages
 APT_PACKAGES=(
   clang # dev tool
   zsh   # terminal shell
 )
 
-ARKADE_SYSTEM_PACKAGES=(
-)
-
+# macos and linux binaries - https://github.com/alexellis/arkade
 ARKADE_TOOL_PACKAGES=(
   k9s       # terminal ui for k8s
   kubectl   # dev tool
@@ -20,6 +36,11 @@ ARKADE_TOOL_PACKAGES=(
   tilt      # dev tool
 )
 
+# linux only packages - https://github.com/alexellis/arkade?tab=readme-ov-file#install-system-packages
+ARKADE_SYSTEM_PACKAGES=(
+)
+
+# macos and linux packages
 BREW_PACKAGES=(
   awscli      # dev tool
   bash        # latest bash
@@ -51,6 +72,7 @@ BREW_PACKAGES=(
   zoxide      # tool to navigate fs
 )
 
+# macos only packages
 BREW_CASK_PACKAGES=(
   1password-cli               # 1password cli
   docker                      # dev tool
@@ -60,6 +82,7 @@ BREW_CASK_PACKAGES=(
   git-credential-manager      # dev tool
 )
 
+# list of directories to ensure it exists
 DIRECTORIES_TO_CREATE=(
   "$HOME/repos/cs"
   "$HOME/repos/gh"
@@ -69,8 +92,10 @@ DIRECTORIES_TO_CREATE=(
   "$HOME/repos/sgtoj"
 )
 
+# dotfiles (skips if empty) - https://www.youtube.com/watch?v=y6XCebnB9gs
 DOTFILES_GIT_PATH="https://github.com/sgtoj/.dotfiles"
 
+# default ssh key name for github.com (skips if empty)
 SSH_KEY_NAME_GITHUB="git"
 
 # ---------------------------------------------------------------------- fns ---
