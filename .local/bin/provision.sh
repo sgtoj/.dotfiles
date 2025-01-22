@@ -3,61 +3,61 @@
 # ------------------------------------------------------------ configuration ---
 
 APT_PACKAGES=(
-  clang
-  zsh
+  clang # dev tool
+  zsh   # terminal shell
 )
 
 ARKADE_SYSTEM_PACKAGES=(
 )
 
 ARKADE_TOOL_PACKAGES=(
-  k9s
-  kubectl
-  kubeseal
-  kustomize
-  op
-  terraform
-  tilt
+  k9s       # terminal ui for k8s
+  kubectl   # dev tool
+  kubeseal  # dev tool
+  kustomize # dev tool
+  op        # 1password cli (latest)
+  terraform # dev tool
+  tilt      # dev tool
 )
 
 BREW_PACKAGES=(
-  awscli
-  bash
-  bat
-  btop
-  eza
-  deno
-  fd
-  ffmpeg
-  fzf
-  git
-  gh
-  go
-  imagemagick
-  jq
-  lazygit
-  libgit2
-  neovim
-  nvm
-  poppler
-  ripgrep
-  starship
-  stow
-  sevenzip
-  tmux
-  tree
-  tree-sitter
-  yazi
-  zoxide
+  awscli      # dev tool
+  bash        # latest bash
+  bat         # alternative to cat
+  btop        # alternative to htop
+  eza         # alternative to ls
+  deno        # dev tool
+  fd          # alternative to find
+  ffmpeg      # dependency: yazi
+  fzf         # fuzzy finder
+  git         # latest git
+  gh          # dev tool: github cli
+  go          # dev tool
+  imagemagic  # dependency: yazi
+  jq          # dev tool
+  lazygit     # terminal ui for git
+  libgit2     # dependency: terraform
+  neovim      # alternative to vim
+  nvm         # dev tool: node-version-manager
+  poppler     # dependency: yazi
+  ripgrep     # alternative to grep
+  starship    # terminal prompt
+  stow        # tool to manage dotfiles
+  sevenzip    # dependency: yazi
+  tmux        # terminal multiplexer
+  tree        # tool to display dir
+  tree-sitter # dev tool: code parser
+  yazi        # file manager
+  zoxide      # tool to navigate fs
 )
 
 BREW_CASK_PACKAGES=(
-  1password-cli
-  docker
-  font-hack-nerd-font
-  font-symbols-only-nerd-font
-  ghostty
-  git-credential-manager
+  1password-cli               # 1password cli
+  docker                      # dev tool
+  font-hack-nerd-font         # font
+  font-symbols-only-nerd-font # font
+  ghostty                     # terminal
+  git-credential-manager      # dev tool
 )
 
 DIRECTORIES_TO_CREATE=(
