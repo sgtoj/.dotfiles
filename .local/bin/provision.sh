@@ -81,6 +81,7 @@ BREW_CASK_PACKAGES=(
   font-symbols-only-nerd-font # font
   ghostty                     # terminal
   git-credential-manager      # dev tool
+  orbstack                    # alternative to docker (mac only)
 )
 
 # list of directories to ensure it exists
