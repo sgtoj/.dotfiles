@@ -239,8 +239,30 @@ if [ -n "$DOTFILES_GIT_PATH" ]; then
     log "dotfiles repo already cloned"
   fi
 
-  log "running stow on dotfiles"
   pushd "$DOTFILES_DIR" >/dev/null
+
+  log "preparing to symlink dotfiles"
+  mapfile -t STOW_LINKS < <(stow . -n -v 2>/dev/null | grep '^LINK:' | sed -n 's/^LINK: \(.*\) =>.*$/\1/p')
+
+  for target in "${STOW_LINKS[@]}"; do
+    # skip if deeper than 1 level (slash in $target)
+    if [[ "$target" == */* ]]; then
+      continue
+    fi
+
+    target_path="$HOME/$target"
+    if [[ -e "$target_path" ]]; then
+      log "renaming $target_path to $target_path.bak"
+      mv "$target_path" "$target_path.bak"
+      if [[ $? -ne 0 ]]; then
+        log_error "could not rename $target_path"
+        popd >/dev/null
+        exit 1
+      fi
+    fi
+  done
+
+  log "running stow on dotfiles"
   stow .
   if [[ $? -ne 0 ]]; then
     log_error "failed to run stow on dotfiles"
