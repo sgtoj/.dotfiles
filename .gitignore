@@ -4,5 +4,6 @@
 .config/gh
 .config/go/telemetry
 .config/op
+.local/bin/posting
 .local/share
 .local/state
