@@ -55,6 +55,7 @@ BREW_PACKAGES=(
   git         # latest git
   gh          # dev tool: github cli
   go          # dev tool
+  httpie      # alternative to curl
   imagemagick # dependency: yazi
   jq          # dev tool
   lazygit     # terminal ui for git
