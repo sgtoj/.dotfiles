@@ -1,22 +1,22 @@
 [user]
-    name = Brian Ojeda
-    email = 9335829+sgtoj@users.noreply.github.com
-    signingkey = 479D7F278CA8ED0051094BCC2AE28BC21E81C2A2
+  name = Brian Ojeda
+  email = 9335829+sgtoj@users.noreply.github.com
+  signingkey = 479D7F278CA8ED0051094BCC2AE28BC21E81C2A2
 
 [commit]
-    gpgSign = true
+  gpgSign = true
 
 [init]
-	defaultBranch = main
+  defaultBranch = main
 
 [credential]
-	helper =
-	helper = /mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe 2> /dev/null
-	helper = /usr/local/share/gcm-core/git-credential-manager 2> /dev/null
+  helper =
+  helper = /mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe 2> /dev/null
+  helper = /usr/local/share/gcm-core/git-credential-manager 2> /dev/null
 
 [credential "https://dev.azure.com"]
-	useHttpPath = true
+  useHttpPath = true
 
 [includeIf "gitdir:~/repo/mpz/"]
-    path = ~/repo/mpz/.gitconfig
+  path = ~/repo/mpz/.gitconfig
 
