@@ -1,8 +1,12 @@
 #!/bin/bash
 
+# -------------------------------------------------------------- description ---
+
+# a script to find and clean git repositories by removing untracked files,
+# pruning stale branches, and running garbage collection
+
 # ------------------------------------------------------------ configuration ---
 
-# path to repositories
 REPO_BASE="$HOME/repos"
 
 # ---------------------------------------------------------------------- fns ---
@@ -19,11 +23,7 @@ clean_git_repo() {
   local repo_path="$1"
   log "cleaning repository: $repo_path"
 
-  # navigate to the repo directory
-  cd "$repo_path" || {
-    log_error "could not access $repo_path"
-    return
-  }
+  pushd "$repo_path"
 
   # fetch and prune stale branches
   git fetch --prune || {
@@ -43,14 +43,15 @@ clean_git_repo() {
     return
   }
 
-  log "Completed cleaning: $repo_path"
-}
+  popd
 
+  log "completed cleaning: $repo_path"
+}
 
 # ------------------------------------------------------------------- script ---
 
-# iterate over repositories 2 levels deep
-find "$REPO_BASE" -mindepth 2 -maxdepth 2 -type d -name ".git" | while read -r git_dir; do
+# iterate over repositories 2 (+1 for .git directory) levels deep
+find "$REPO_BASE" -mindepth 3 -maxdepth 3 -type d -name ".git" | while read -r git_dir; do
   repo_dir=$(dirname "$git_dir")
   clean_git_repo "$repo_dir"
 done

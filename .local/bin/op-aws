@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 
+# -------------------------------------------------------------- description ---
+
+# a script store and retrieve `~/.aws/config` file in 1password
+#
+# commands:
+# - push: saves `~/.aws/config` file content in 1password
+# - pull: retrieves `~/.aws/config` content from 1password and saves it locally
+
 # ------------------------------------------------------------ configuration ---
 
 OP_VAULT="Private"
@@ -28,7 +36,6 @@ push_config() {
   fi
 }
 
-
 pull_config() {
   CONFIG_CONTENT=$(op item get "$OP_ITEM_NAME" --vault="$OP_VAULT" --format=json | jq -r '.fields[] | select(.label=="note").value')
 
@@ -38,7 +45,7 @@ pull_config() {
   fi
 
   mkdir -p "$(dirname "$AWS_CONFIG_PATH")"
-  echo "$CONFIG_CONTENT" > "$AWS_CONFIG_PATH"
+  echo "$CONFIG_CONTENT" >"$AWS_CONFIG_PATH"
   echo "pulled aws config from 1password to $AWS_CONFIG_PATH"
 }
 
@@ -46,14 +53,22 @@ pull_config() {
 
 # requires: op, jq
 for cmd in op jq; do
-  command -v "$cmd" >/dev/null || { echo "$cmd not found"; exit 1; }
+  command -v "$cmd" >/dev/null || {
+    echo "$cmd not found"
+    exit 1
+  }
 done
 
-[ $# -ne 1 ] && { echo "Usage: $0 {push|pull}"; exit 1; }
+[ $# -ne 1 ] && {
+  echo "Usage: $0 {push|pull}"
+  exit 1
+}
 
 case "$1" in
-  push) push_config ;;
-  pull) pull_config ;;
-  *) echo "Usage: $0 {push|pull}"; exit 1 ;;
+push) push_config ;;
+pull) pull_config ;;
+*)
+  echo "Usage: $0 {push|pull}"
+  exit 1
+  ;;
 esac
-

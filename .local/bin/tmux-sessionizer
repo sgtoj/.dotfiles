@@ -1,5 +1,21 @@
 #!/usr/bin/env bash
 
+# -------------------------------------------------------------- description ---
+
+# script to select a project directory interactively and then opens or switches
+# to a corresponding tmux session for project directory
+#
+# credit:
+# - script is based on a script written by primeagen
+# - https://github.com/ThePrimeagen/.dotfiles/blob/master/bin/.local/scripts/tmux-sessionizer
+
+# ------------------------------------------------------------ configuration ---
+
+function list_search_directories() {
+  find ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp -mindepth 1 -maxdepth 1 -type d
+  find ~/repos/scrap ~/repos/gh -mindepth 1 -maxdepth 1 -type d
+  echo "$HOME/.dotfiles"
+}
 
 # ---------------------------------------------------------------------- fns ---
 
@@ -21,13 +37,13 @@ function exec_fzf() {
   fzf_path=$(get_fzf_path)
 
   $fzf_path \
-     --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \
-     --color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc \
-     --color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8 \
-     --color=selected-bg:#45475a \
-     --border="rounded" \
-     --multi \
-     "${@}"
+    --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \
+    --color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc \
+    --color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8 \
+    --color=selected-bg:#45475a \
+    --border="rounded" \
+    --multi \
+    "${@}"
 }
 
 # ------------------------------------------------------------------- script ---
@@ -35,13 +51,7 @@ function exec_fzf() {
 if [[ $# -eq 1 ]]; then
   selected=$1
 else
-  selected=$(
-    {
-      find ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp -mindepth 1 -maxdepth 1 -type d
-      find ~/repos/scrap ~/repos/gh -mindepth 1 -maxdepth 1 -type d
-      echo "$HOME/.dotfiles"
-    } | exec_fzf --tmux center
-  )
+  selected=$(list_search_directories | exec_fzf --tmux center)
 fi
 
 if [[ -z $selected ]]; then
@@ -65,9 +75,8 @@ if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
   exit 0
 fi
 
-if ! tmux has-session -t=$selected_name 2> /dev/null; then
+if ! tmux has-session -t=$selected_name 2>/dev/null; then
   tmux new-session -ds $selected_name -c $selected
 fi
 
 tmux switch-client -t $selected_name
-

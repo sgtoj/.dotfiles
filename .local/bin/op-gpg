@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# -------------------------------------------------------------- description ---
+
+# a script store and retrieve gpg keys in 1password
+#
+# commands:
+# - push: exports gpg keys and stores them in 1password
+# - pull: retrieves gpg keys and imports them to the local keyring
+
 # ------------------------------------------------------------ configuration ---
 
 OP_VAULT="Keys"
@@ -43,7 +51,7 @@ pull_keys() {
 
   for ID in $ITEMS; do
     TMP=$(mktemp)
-    op item get "$ID" --fields note --reveal | base64 -d > "$TMP"
+    op item get "$ID" --fields note --reveal | base64 -d >"$TMP"
     gpg --import "$TMP"
     rm -f "$TMP"
   done
@@ -53,14 +61,22 @@ pull_keys() {
 
 # requires: op, gpg, jq
 for cmd in op gpg jq; do
-  command -v "$cmd" >/dev/null || { echo "$cmd not found"; exit 1; }
+  command -v "$cmd" >/dev/null || {
+    echo "$cmd not found"
+    exit 1
+  }
 done
 
-[ $# -ne 1 ] && { echo "Usage: $0 {push|pull}"; exit 1; }
+[ $# -ne 1 ] && {
+  echo "Usage: $0 {push|pull}"
+  exit 1
+}
 
 case "$1" in
-  push) push_keys ;;
-  pull) pull_keys ;;
-  *) echo "Usage: $0 {push|pull}"; exit 1 ;;
+push) push_keys ;;
+pull) pull_keys ;;
+*)
+  echo "Usage: $0 {push|pull}"
+  exit 1
+  ;;
 esac
-
