@@ -23,6 +23,7 @@
 # linux only packages
 APT_PACKAGES=(
   clang # dev tool
+  make  # dev tool
   zsh   # terminal shell
 )
 
