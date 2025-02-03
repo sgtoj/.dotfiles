@@ -318,6 +318,13 @@ if [ -n "$SSH_KEY_NAME_GITHUB" ]; then
   fi
 fi
 
+# add to docker group if linux
+if [[ "$OSTYPE" != "darwin"* && ! $(groups $USER) =~ \bdocker\b ]]; then
+  sudo groupadd docker
+  sudo usermod -aG docker $USER
+  newgrp docker
+fi
+
 # set zsh as the default shell
 if [[ "$SHELL" != "/bin/zsh" ]]; then
   log "changing default shell to zsh"
