@@ -321,7 +321,7 @@ fi
 # add to docker group if linux
 if [[ "$OSTYPE" != "darwin"* && ! $(groups $USER) =~ \bdocker\b ]]; then
   sudo groupadd docker
-  sudo usermod -aG docker $USER
+  sudo gpasswd -a $USER docker
   newgrp docker
 fi
 
