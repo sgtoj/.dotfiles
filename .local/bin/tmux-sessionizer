@@ -12,8 +12,9 @@
 # ------------------------------------------------------------ configuration ---
 
 function list_search_directories() {
-  find ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp -mindepth 1 -maxdepth 1 -type d
-  find ~/repos/scrap ~/repos/gh -mindepth 1 -maxdepth 1 -type d
+  find ~/repos/mpz -mindepth 1 -maxdepth 1 -type d | sort
+  find ~/repos/cs ~/repos/sgtoj ~/repos/pp -mindepth 1 -maxdepth 1 -type d | sort
+  find ~/repos/scrap ~/repos/gh -mindepth 1 -maxdepth 1 -type d | sort
   echo "$HOME/.dotfiles"
 }
 
