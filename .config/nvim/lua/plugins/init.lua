@@ -21,6 +21,7 @@ return {
       ensure_installed = {
         "bash",
         "css",
+        "editorconfig",
         "go",
         "gomod",
         "gosum",
