@@ -34,6 +34,7 @@ return {
         "python",
         "scss",
         "sql",
+        "terraform",
         "toml",
         "typescript",
         "vim",
