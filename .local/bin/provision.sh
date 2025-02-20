@@ -329,6 +329,7 @@ if [[ ! -f "/usr/local/bin/session-manager-plugin" ]]; then
     sudo dpkg -i session-manager-plugin.deb
   fi
   rm -rf sessionmanager-bundle*
+  rm session-manager-*
 fi
 
 # add to docker group if linux
