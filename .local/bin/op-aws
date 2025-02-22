@@ -28,10 +28,10 @@ push_config() {
   # update existing item if exists; otherwise create
   ITEM_ID=$(op item list --vault="$OP_VAULT" --format=json | jq -r ".[] | select(.title==\"$OP_ITEM_NAME\") | .id")
   if [ -n "$ITEM_ID" ]; then
-    op item edit "$ITEM_ID" --vault="$OP_VAULT" "notesPlain=$CONFIG_CONTENT"
+    op item edit "$ITEM_ID" --vault="$OP_VAULT" "note=$CONFIG_CONTENT" 1>/dev/null
     echo "updated aws config in 1password"
   else
-    op item create --vault="$OP_VAULT" --category="Secure Note" --title="$OP_ITEM_NAME" note="$CONFIG_CONTENT"
+    op item create --vault="$OP_VAULT" --category="Secure Note" --title="$OP_ITEM_NAME" note="$CONFIG_CONTENT" 1>/dev/null
     echo "pushed aws config to 1password"
   fi
 }
