@@ -72,8 +72,8 @@ alias ls="ls --color"
 alias vim='nvim'
 
 # setup - bat
-if [ ! -d "$HOME/.cache/bat" ] && alias cat | grep 'bat'; then
-  bat cache --build
+if [ ! -d "$HOME/.cache/bat" ] && alias cat | grep 'bat' >/dev/null; then
+  cat cache --build 2>/dev/null
 fi
 
 # setup - node version manager (nvm)
