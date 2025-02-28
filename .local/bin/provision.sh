@@ -102,6 +102,10 @@ DOTFILES_GIT_PATH="https://github.com/sgtoj/.dotfiles"
 # default ssh key name for github.com (skips if empty)
 SSH_KEY_NAME_GITHUB="git"
 
+# teleport binaries (brew's pkg is out of date) - https://goteleport.com/
+TELEPORT_VERSION=17.2.9
+TELEPORT_EDITION=oss
+
 # ---------------------------------------------------------------------- fns ---
 
 log() {
@@ -320,6 +324,7 @@ fi
 
 # add aws ssm sessions plugin
 if [[ ! -f "/usr/local/bin/session-manager-plugin" ]]; then
+  log "installing aws session-manager plugin"
   if [[ "$OSTYPE" == "darwin"* ]]; then
     curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/mac/sessionmanager-bundle.zip" -o "sessionmanager-bundle.zip"
     unzip sessionmanager-bundle.zip
@@ -330,6 +335,17 @@ if [[ ! -f "/usr/local/bin/session-manager-plugin" ]]; then
   fi
   rm -rf sessionmanager-bundle*
   rm session-manager-*
+fi
+
+# add teleport binaries
+if ! command -v tsh &>/dev/null; then
+  log "installing teleport binaries"
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    curl -O https://cdn.teleport.dev/teleport-${TELEPORT_VERSION}.pkg
+    sudo installer -pkg teleport-${TELEPORT_VERSION}.pkg -target /
+  else
+    curl https://cdn.teleport.dev/install-v${TELEPORT_VERSION}.sh | bash -s ${TELEPORT_VERSION} ${TELEPORT_EDITION}
+  fi
 fi
 
 # add to docker group if linux
