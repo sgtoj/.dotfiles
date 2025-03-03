@@ -338,7 +338,7 @@ if [[ ! -f "/usr/local/bin/session-manager-plugin" ]]; then
 fi
 
 # add teleport binaries
-if ! command -v tsh &>/dev/null; then
+if ! command -v tsh &>/dev/null && ! command -v tctl &>/dev/null; then
   log "installing teleport binaries"
   if [[ "$OSTYPE" == "darwin"* ]]; then
     curl -O https://cdn.teleport.dev/teleport-${TELEPORT_VERSION}.pkg
@@ -346,6 +346,7 @@ if ! command -v tsh &>/dev/null; then
   else
     curl https://cdn.teleport.dev/install-v${TELEPORT_VERSION}.sh | bash -s ${TELEPORT_VERSION} ${TELEPORT_EDITION}
   fi
+  rm teleport-*
 fi
 
 # add to docker group if linux
