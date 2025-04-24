@@ -72,6 +72,7 @@ BREW_PACKAGES=(
   tree        # tool to display dir
   tree-sitter # dev tool: code parsing
   yazi        # terminal file manager
+  yq          # dev tool
   zoxide      # tool to navigate fs
 )
 
