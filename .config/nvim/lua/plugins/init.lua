@@ -1,4 +1,5 @@
 return {
+  { import = "nvchad.blink.lazyspec" },
   {
     "stevearc/conform.nvim",
     event = "BufWritePre",
