@@ -28,9 +28,9 @@ fi
 source "${ZINIT_HOME}/zinit.zsh"
 
 # zinit - plugins
+zinit light zsh-users/zsh-autosuggestions
 zinit light zsh-users/zsh-syntax-highlighting
 zinit light zsh-users/zsh-completions
-zinit light zsh-users/zsh-autosuggestions
 zinit light Aloxaf/fzf-tab
 
 # zinit - snippets
@@ -85,7 +85,9 @@ if [[ "${NVM_INSTALL_PATH}" != "0" ]]; then
 fi
 
 # keybindings
-bindkey -e
+bindkey -v
 bindkey '^p' history-search-backward
 bindkey '^n' history-search-forward
 bindkey '^[w' kill-region
+
+export KEYTIMEOUT=1 # speeds up vi mode transitions
