@@ -1,0 +1,17 @@
+views:
+  v1/nodes:
+    columns:
+      - NAME
+      - STATUS
+      - INSTANCE:.spec.providerID|split("/")|.[-1]
+      - ROLE|H
+      - TAINTS
+      - VERSION
+      - PODS
+      - CPU|W
+      - MEM|W
+      - "%CPU"
+      - "%MEM"
+      - CPU/A|W
+      - MEM/A|W
+      - AGE

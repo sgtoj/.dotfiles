@@ -1,0 +1,29 @@
+plugins:
+  copy-aws-instance-id:
+    shortCut: Ctrl-Y
+    description: Copy Instance
+    scopes:
+      - v1/nodes
+    command: sh
+    background: true
+    args:
+      - -c
+      - kubectl --context $CONTEXT get node $NAME -o json |  jq -r '.spec.providerID | split("/") | .[-1]' | pbcopy
+  kill-aws-instance:
+    shortCut: Ctrl-X
+    confirm: true
+    dangerous: true
+    description: Kill Instance
+    scopes:
+      - v1/nodes
+    command: bash
+    background: true
+    args:
+      - -c
+      - |
+        INSTANCE_INFO=$(kubectl --context $CONTEXT get node $NAME -o json | jq -cr '.spec.providerID | split("/")')
+        INSTANCE_ID=$(echo "$INSTANCE_INFO" | jq -r '.[-1]')
+        INSTANCE_AZ=$(echo "$INSTANCE_INFO" | jq -r '.[-2]')
+        INSTANCE_REGION=${INSTANCE_AZ::-1}
+        AWS_PROFILE=$(echo "$CONTEXT" | sed -E 's/^([a-z0-9]+)-[a-z0-9]+-([a-z]+)-.*/\1-\2-admin/')
+        aws ec2 terminate-instances --instance-ids ${INSTANCE_ID} --region ${INSTANCE_REGION} --profile ${AWS_PROFILE}
