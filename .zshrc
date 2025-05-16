@@ -85,9 +85,9 @@ if [[ "${NVM_INSTALL_PATH}" != "0" ]]; then
 fi
 
 # keybindings
-bindkey -v
+bindkey -e
 bindkey '^p' history-search-backward
 bindkey '^n' history-search-forward
 bindkey '^[w' kill-region
 
-export KEYTIMEOUT=1 # speeds up vi mode transitions
+export KEYTIMEOUT=1 #speeds up vi mode transitions
