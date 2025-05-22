@@ -104,7 +104,7 @@ DOTFILES_GIT_PATH="https://github.com/sgtoj/.dotfiles"
 SSH_KEY_NAME_GITHUB="git"
 
 # teleport binaries (brew's pkg is out of date) - https://goteleport.com/
-TELEPORT_VERSION=17.2.9
+TELEPORT_VERSION=17.4.8
 TELEPORT_EDITION=oss
 
 # ---------------------------------------------------------------------- fns ---

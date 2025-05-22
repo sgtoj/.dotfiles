@@ -91,3 +91,5 @@ bindkey '^n' history-search-forward
 bindkey '^[w' kill-region
 
 export KEYTIMEOUT=1 #speeds up vi mode transitions
+
+export TELEPORT_TOOLS_VERSION=off
