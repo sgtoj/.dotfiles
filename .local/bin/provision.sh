@@ -22,9 +22,10 @@
 
 # linux only packages
 APT_PACKAGES=(
-  clang # dev tool
-  make  # dev tool
-  zsh   # terminal shell
+  bind9-dnsutils # utilities (dig, nslookup, etc)
+  clang          # dev tool
+  make           # dev tool
+  zsh            # terminal shell
 )
 
 # macos and linux binaries - https://github.com/alexellis/arkade
