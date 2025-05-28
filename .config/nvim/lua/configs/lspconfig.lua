@@ -32,9 +32,6 @@ local servers = {
 }
 
 for name, opts in pairs(servers) do
-  opts.on_init = nvlsp.on_init
-  opts.on_attach = nvlsp.on_attach
-  opts.capabilities = nvlsp.capabilities
-
-  lspconfig[name].setup(opts)
+  vim.lsp.config(name, opts)
+  vim.lsp.enable(name)
 end
