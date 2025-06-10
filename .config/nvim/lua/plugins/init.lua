@@ -12,6 +12,18 @@ return {
     end,
   },
   {
+    "nvim-telescope/telescope.nvim",
+    opts = function(_, conf)
+      conf.pickers = conf.pickers or {}
+
+      conf.pickers.find_files = conf.pickers.find_files or {}
+      conf.pickers.find_files.hidden = true
+      conf.pickers.find_files.file_ignore_patterns = { ".git/", "node_modules/" }
+
+      return conf
+    end,
+  },
+  {
     "christoomey/vim-tmux-navigator",
     lazy = false,
   },
