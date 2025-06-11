@@ -15,7 +15,7 @@ eval "$(curl -sSfL https://raw.githubusercontent.com/junegunn/fzf/master/shell/c
 eval "$(starship init zsh)"
 eval "$(zoxide init --cmd cd zsh)"
 
-if [[ -f "/opt/homebrew/bin/brew" ]] then
+if [[ -f "/opt/homebrew/bin/brew" ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
 fi
 
@@ -31,6 +31,7 @@ source "${ZINIT_HOME}/zinit.zsh"
 zinit light zsh-users/zsh-autosuggestions
 zinit light zsh-users/zsh-syntax-highlighting
 zinit light zsh-users/zsh-completions
+# zinit light jeffreytse/zsh-vi-mode
 zinit light Aloxaf/fzf-tab
 
 # zinit - snippets
@@ -84,12 +85,22 @@ if [[ "${NVM_INSTALL_PATH}" != "0" ]]; then
   [ -s "$NVM_INSTALL_PATH/etc/bash_completion.d/nvm" ] && . "$NVM_INSTALL_PATH/etc/bash_completion.d/nvm"  # loads nvm bash_completion
 fi
 
-# keybindings
-bindkey -e
-bindkey '^p' history-search-backward
-bindkey '^n' history-search-forward
-bindkey '^[w' kill-region
+# keybindings (vim)
+export KEYTIMEOUT=30 # 100 units is 1s
+bindkey -v
+bindkey -M viins 'jk'  vi-cmd-mode
+bindkey -M viins '^?'  backward-delete-char   # backspace (DEL)
+bindkey -M viins '^H'  backward-delete-char   # backspace (Ctrl-H)
+bindkey -M viins '^f'  autosuggest-accept
+bindkey -M viins '^p'  history-search-backward
+bindkey -M viins '^n'  history-search-forward
+bindkey -M viins '^[w' kill-region
 
-export KEYTIMEOUT=1 #speeds up vi mode transitions
+# keybindings (emacs)
+# bindkey -e
+# bindkey '^p' history-search-backward
+# bindkey '^n' history-search-forward
+# bindkey '^[w' kill-region
 
 export TELEPORT_TOOLS_VERSION=off
+
