@@ -104,4 +104,4 @@ bindkey -M viins '^[w' kill-region
 # bindkey '^[w' kill-region
 
 export TELEPORT_TOOLS_VERSION=off
-
+export SHELLCHECK_OPTS='-S warning'

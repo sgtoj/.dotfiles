@@ -4,7 +4,6 @@ local lspconfig = require "lspconfig"
 local nvlsp = require "nvchad.configs.lspconfig"
 
 local servers = {
-  bashls = {},
   cssls = {},
   eslint = {},
   gopls = {},
@@ -13,6 +12,13 @@ local servers = {
   terraformls = {},
   tilt_ls = {},
 
+  bashls = {
+    settings = {
+      bashIde = {
+        shellcheckArguments = "-S warning",
+      },
+    },
+  },
   denols = {
     root_dir = lspconfig.util.root_pattern("deno.json", "deno.jsonc"),
   },

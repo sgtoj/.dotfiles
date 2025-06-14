@@ -66,6 +66,7 @@ BREW_PACKAGES=(
   nvm         # dev tool: node-version-manager
   poppler     # dependency: yazi
   ripgrep     # alternative to grep
+  shellcheck  # dev tool: shell linting
   starship    # terminal prompt
   stow        # tool to manage dotfiles
   sevenzip    # dependency: yazi
@@ -177,7 +178,7 @@ for package in "${APT_PACKAGES[@]}"; do
   if [[ $OSTYPE == "darwin"* ]]; then
     continue
   fi
-  if ! command -v $package &>/dev/null; then
+  if ! command -v "$package" &>/dev/null; then
     log "installing $package"
     sudo apt install "$package"
     if [[ $? -ne 0 ]]; then
@@ -247,7 +248,7 @@ if [ -n "$DOTFILES_GIT_PATH" ]; then
     log "dotfiles repo already cloned"
   fi
 
-  pushd "$DOTFILES_DIR" >/dev/null
+  pushd "$DOTFILES_DIR" >/dev/null || exit
 
   log "preparing to symlink dotfiles"
   mapfile -t STOW_LINKS < <(stow . -n -v 2>/dev/null | grep '^LINK:' | sed -n 's/^LINK: \(.*\) =>.*$/\1/p')
@@ -264,7 +265,7 @@ if [ -n "$DOTFILES_GIT_PATH" ]; then
       mv "$target_path" "$target_path.bak"
       if [[ $? -ne 0 ]]; then
         log_error "could not rename $target_path"
-        popd >/dev/null
+        popd >/dev/null || exit
         exit 1
       fi
     fi
@@ -274,10 +275,10 @@ if [ -n "$DOTFILES_GIT_PATH" ]; then
   stow .
   if [[ $? -ne 0 ]]; then
     log_error "failed to run stow on dotfiles"
-    popd >/dev/null
+    popd >/dev/null || exit
     exit 1
   fi
-  popd >/dev/null
+  popd >/dev/null || exit
 fi
 
 # install latest node lts using nvm and set as default
@@ -366,7 +367,7 @@ fi
 
 # set path to ghostty configuration
 if [[ "$OSTYPE" == "darwin"* ]]; then
-  mkdir -p $HOME/Library/Application\ Support/com.mitchellh.ghostty
+  mkdir -p "$HOME/Library/Application\ Support/com.mitchellh.ghostty"
   echo "config-file = $HOME/.config/ghostty/config" >$HOME/Library/Application\ Support/com.mitchellh.ghostty/config
 fi
 
