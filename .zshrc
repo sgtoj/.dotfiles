@@ -32,7 +32,6 @@ source "${ZINIT_HOME}/zinit.zsh"
 zinit light zsh-users/zsh-autosuggestions
 zinit light zsh-users/zsh-syntax-highlighting
 zinit light zsh-users/zsh-completions
-# zinit light jeffreytse/zsh-vi-mode
 zinit light Aloxaf/fzf-tab
 
 # zinit - snippets
@@ -105,3 +104,24 @@ bindkey -M viins '^[w' kill-region
 
 export TELEPORT_TOOLS_VERSION=off
 export SHELLCHECK_OPTS='-S warning'
+
+
+
+# cursor styles for vim modes
+function zle-keymap-select {
+  case $KEYMAP in
+    vicmd) echo -ne '\e[1 q' ;;  # block cursor
+    viins) echo -ne '\e[5 q' ;;  # beam cursor
+    main)  echo -ne '\e[5 q' ;;  # fallback
+  esac
+}
+function zle-line-init {
+  echo -ne '\e[5 q'  # start with beam
+}
+function zle-line-finish {
+  echo -ne '\e[5 q'  # reset to beam on finish
+}
+zle -N zle-keymap-select
+zle -N zle-line-init
+zle -N zle-line-finish
+unset zle_bracketed_paste # disable bracketed paste messiness
