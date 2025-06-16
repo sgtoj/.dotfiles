@@ -13,7 +13,6 @@ export FZF_DEFAULT_OPTS=" \
 --multi"
 
 eval "$(curl -sSfL https://raw.githubusercontent.com/junegunn/fzf/master/shell/completion.zsh)"
-eval "$(starship init zsh)"
 eval "$(zoxide init --cmd cd zsh)"
 
 if [[ -f "/opt/homebrew/bin/brew" ]]; then
@@ -96,18 +95,8 @@ bindkey -M viins '^p'  history-search-backward
 bindkey -M viins '^n'  history-search-forward
 bindkey -M viins '^[w' kill-region
 
-# keybindings (emacs)
-# bindkey -e
-# bindkey '^p' history-search-backward
-# bindkey '^n' history-search-forward
-# bindkey '^[w' kill-region
 
-export TELEPORT_TOOLS_VERSION=off
-export SHELLCHECK_OPTS='-S warning'
-
-
-
-# cursor styles for vim modes
+# cursor
 function zle-keymap-select {
   case $KEYMAP in
     vicmd) echo -ne '\e[1 q' ;;  # block cursor
@@ -125,3 +114,10 @@ zle -N zle-keymap-select
 zle -N zle-line-init
 zle -N zle-line-finish
 unset zle_bracketed_paste # disable bracketed paste messiness
+
+# starship
+eval "$(starship init zsh)"
+
+# environment variables
+export TELEPORT_TOOLS_VERSION=off
+export SHELLCHECK_OPTS='-S warning'
