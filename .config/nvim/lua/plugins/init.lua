@@ -15,11 +15,9 @@ return {
     "nvim-telescope/telescope.nvim",
     opts = function(_, conf)
       conf.pickers = conf.pickers or {}
-
       conf.pickers.find_files = conf.pickers.find_files or {}
       conf.pickers.find_files.hidden = true
       conf.pickers.find_files.file_ignore_patterns = { ".git/", "node_modules/" }
-
       return conf
     end,
   },
@@ -60,6 +58,16 @@ return {
           "dockerfile", -- broken
         },
       },
+    },
+  },
+  {
+    "sphamba/smear-cursor.nvim",
+    lazy = false,
+    opts = {
+      smear_between_buffers = true,
+      smear_between_neighbor_lines = true,
+      scroll_buffer_space = true,
+      smear_insert_mode = true,
     },
   },
 }
