@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+# -------------------------------------------------------------- description ---
+#
+# open neovim with preferred personal-development-environment (pde) view
+#
+# ------------------------------------------------------------ configuration ---
+
+exec nvim -c 'enew' -c ':lua require("nvim-tree.api").tree.open()' -c 'wincmd l'

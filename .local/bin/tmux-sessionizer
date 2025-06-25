@@ -18,6 +18,8 @@ function list_search_directories() {
   echo "$HOME/.dotfiles"
 }
 
+AUTORUN_CMD="nvim -c ':lua require(\"nvim-tree.api\").tree.open()'"
+
 # ---------------------------------------------------------------------- fns ---
 
 function get_fzf_path() {
@@ -48,6 +50,16 @@ function exec_fzf() {
     "${@}"
 }
 
+create_session() {
+  local name="$1" dir="$2"
+
+  # start the session detached, running zsh
+  tmux new-session -ds "$name" -c "$dir" "zsh"
+
+  # send nvim command to that zsh
+  tmux send-keys -t "$name" "neovim-pde" C-m
+}
+
 # ------------------------------------------------------------------- script ---
 
 if [[ $# -eq 1 ]]; then
@@ -72,13 +84,15 @@ fi
 
 tmux_running=$(pgrep tmux)
 
-if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
-  tmux new-session -s $selected_name -c $selected
+if [[ -z $TMUX && -z $tmux_running ]]; then
+  create_session "$selected_name" "$selected"
+  tmux attach-session -t "$selected_name"
   exit 0
 fi
 
-if ! tmux has-session -t=$selected_name 2>/dev/null; then
-  tmux new-session -ds $selected_name -c $selected
+# inside tmux or server already running
+if ! tmux has-session -t="$selected_name" 2>/dev/null; then
+  create_session "$selected_name" "$selected"
 fi
 
 tmux switch-client -t $selected_name
