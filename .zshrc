@@ -1,3 +1,8 @@
+# profiler start (enable via ZSH_PROFILE=1)
+if [[ -n $ZSH_PROFILE ]]; then
+  zmodload zsh/zprof             # start profiler early
+fi
+
 export EDITOR=nvim
 export XDG_CACHE_HOME=${HOME}/.cache
 export XDG_CONFIG_HOME=${HOME}/.config
@@ -22,26 +27,37 @@ fi
 # zinit - load
 ZINIT_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}/zinit/zinit.git"
 if [ ! -d "${ZINIT_HOME}" ]; then
-   mkdir -p "$(dirname ${ZINIT_HOME})"
-   git clone https://github.com/zdharma-continuum/zinit.git "${ZINIT_HOME}"
+  mkdir -p "$(dirname ${ZINIT_HOME})"
+  git clone https://github.com/zdharma-continuum/zinit.git "${ZINIT_HOME}"
 fi
 source "${ZINIT_HOME}/zinit.zsh"
 
 # zinit - plugins
+zinit ice wait lucid
 zinit light zsh-users/zsh-autosuggestions
+zinit ice wait lucid
 zinit light zsh-users/zsh-syntax-highlighting
+zinit ice wait lucid
 zinit light zsh-users/zsh-completions
+zinit ice wait lucid
 zinit light Aloxaf/fzf-tab
 
 # zinit - snippets
+zinit ice wait lucid snippet
 zinit snippet OMZL::git.zsh
+zinit ice wait lucid snippet
 zinit snippet OMZP::git
+zinit ice wait lucid snippet
 zinit snippet OMZP::kubectl
+zinit ice wait lucid snippet
 zinit snippet OMZP::kubectx
+zinit ice wait lucid snippet
 zinit snippet OMZP::command-not-found
 
 # zinit - load completions
-autoload -Uz compinit && compinit
+autoload -Uz compinit
+COMPDUMP="${XDG_CACHE_HOME:-${HOME}/.cache}/.zcompdump"
+compinit -C -d "${COMPDUMP}"
 zinit cdreplay -q
 
 # zinit - customize completions
@@ -80,7 +96,7 @@ fi
 NVM_INSTALL_PATH=$(brew --prefix nvm 2>/dev/null || echo "0")
 if [[ "${NVM_INSTALL_PATH}" != "0" ]]; then
   export NVM_DIR="$HOME/.nvm"
-  [ -s "$NVM_INSTALL_PATH/nvm.sh" ] && . "$NVM_INSTALL_PATH/nvm.sh"  # loads nvm
+  [ -s "$NVM_INSTALL_PATH/nvm.sh" ] && . "$NVM_INSTALL_PATH/nvm.sh" --no-use # loads nvm
   [ -s "$NVM_INSTALL_PATH/etc/bash_completion.d/nvm" ] && . "$NVM_INSTALL_PATH/etc/bash_completion.d/nvm"  # loads nvm bash_completion
 fi
 
@@ -94,7 +110,6 @@ bindkey -M viins '^f'  autosuggest-accept
 bindkey -M viins '^p'  history-search-backward
 bindkey -M viins '^n'  history-search-forward
 bindkey -M viins '^[w' kill-region
-
 
 # cursor
 function zle-keymap-select {
@@ -121,3 +136,10 @@ eval "$(starship init zsh)"
 # environment variables
 export TELEPORT_TOOLS_VERSION=off
 export SHELLCHECK_OPTS='-S warning'
+
+# profiler end (enable via ZSH_PROFILE=1)
+if [[ -n $ZSH_PROFILE ]]; then
+  # dump stats to a file then print a one-liner summary
+  zprof >${XDG_CACHE_HOME:-$HOME/.cache}/zsh_profile.txt
+  printf '%s\n' 'zsh profile written to ~/.cache/zsh_profile.txt'
+fi
