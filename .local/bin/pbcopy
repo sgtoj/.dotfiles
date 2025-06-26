@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+set -e
+
+# -------------------------------------------------------------- description ---
+#
+# cross-platform pbcopy shim for macos and wsl
+#
+# ------------------------------------------------------------------- script ---
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  /usr/bin/pbcopy "$@"
+elif grep -qi microsoft /proc/version 2>/dev/null || [ -n "$WSL_DISTRO_NAME" ]; then
+  cat "$@" | clip.exe # wsl
+fi
