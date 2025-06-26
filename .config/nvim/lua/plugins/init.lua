@@ -48,6 +48,7 @@ return {
         "sql",
         "terraform",
         "toml",
+        "tmux",
         "typescript",
         "vim",
         "vimdoc",

@@ -4,6 +4,6 @@
 #
 # open neovim with preferred personal-development-environment (pde) view
 #
-# ------------------------------------------------------------ configuration ---
+# ------------------------------------------------------------------- script ---
 
 exec nvim -c 'enew' -c ':lua require("nvim-tree.api").tree.open()' -c 'wincmd l'

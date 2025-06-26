@@ -51,10 +51,7 @@ function exec_fzf() {
 create_session() {
   local name="$1" dir="$2"
 
-  # start the session detached, running zsh
   tmux new-session -ds "$name" -c "$dir" "zsh"
-
-  # send nvim command to that zsh
   tmux send-keys -t "$name" "nvim-pde" C-m
 }
 

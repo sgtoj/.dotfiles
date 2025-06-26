@@ -1,7 +1,6 @@
 require("nvchad.configs.lspconfig").defaults()
 
 local lspconfig = require "lspconfig"
-local nvlsp = require "nvchad.configs.lspconfig"
 
 local servers = {
   cssls = {},
