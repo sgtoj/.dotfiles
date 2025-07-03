@@ -5,3 +5,6 @@ font-feature = -dlig
 macos-titlebar-proxy-icon = hidden
 title = " "
 theme = catppuccin-mocha
+macos-auto-secure-input = true
+auto-update = check
+auto-update-channel = tip
