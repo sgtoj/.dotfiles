@@ -1,15 +1,15 @@
 require("nvchad.configs.lspconfig").defaults()
 
-local lspconfig = require "lspconfig"
-
 local servers = {
   cssls = {},
+  denols = {},
   eslint = {},
   gopls = {},
   html = {},
   pyright = {},
   terraformls = {},
   tilt_ls = {},
+  ts_ls = {},
 
   bashls = {
     settings = {
@@ -18,9 +18,7 @@ local servers = {
       },
     },
   },
-  denols = {
-    root_dir = lspconfig.util.root_pattern("deno.json", "deno.jsonc"),
-  },
+
   dockerls = {
     settings = {
       docker = {
@@ -29,10 +27,6 @@ local servers = {
         },
       },
     },
-  },
-  ts_ls = {
-    root_dir = lspconfig.util.root_pattern "package.json",
-    single_file_support = false,
   },
 }
 

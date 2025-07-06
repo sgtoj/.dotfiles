@@ -1,20 +1,22 @@
 local options = {
   formatters_by_ft = {
-    -- css = { "prettier" },
-    -- html = { "prettier" },
     go = { "goimports", "gofmt" },
     lua = { "stylua" },
     python = { "black" },
     sh = { "shfmt" },
     terraform = { "terraform_fmt" },
+    javascript = { "deno_fmt", "prettier" },
+    typescript = { "deno_fmt", "prettier" },
+    javascriptreact = { "deno_fmt", "prettier" },
+    typescriptreact = { "deno_fmt", "prettier" },
   },
 
   formatters = {
     black = { prepend_args = { "--fast" } },
+    deno_fmt = { command = "deno", args = { "fmt", "-" } },
   },
 
   format_on_save = {
-    -- These options will be passed to conform.format()
     timeout_ms = 500,
     lsp_fallback = true,
   },
