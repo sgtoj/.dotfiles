@@ -2,7 +2,7 @@ require("nvchad.configs.lspconfig").defaults()
 
 local servers = {
   cssls = {},
-  denols = {},
+  -- denols = {},
   eslint = {},
   gopls = {},
   html = {},
