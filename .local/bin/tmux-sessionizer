@@ -75,6 +75,8 @@ selected_name="${parent_name}-${base_name}"
 # overides for generated session names
 if [[ "$base_name" == "_dotfiles" ]]; then
   selected_name="dotfiles"
+elif [[ "$base_name" == "_github" ]]; then
+  selected_name="${parent_name}-github"
 fi
 
 tmux_running=$(pgrep tmux)
