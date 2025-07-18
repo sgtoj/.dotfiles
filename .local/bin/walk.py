@@ -4,10 +4,15 @@ import os
 import sys
 import fnmatch
 
+HIDDEN_PATHS = [".git", ".node_modules", ".env", "go.sum"]
+
 
 def should_exclude(path, base_dir, excludes):
     rel_path = os.path.relpath(path, base_dir)
     for pattern in excludes:
+        if fnmatch.fnmatch(rel_path, pattern):
+            return True
+    for pattern in HIDDEN_PATHS:
         if fnmatch.fnmatch(rel_path, pattern):
             return True
     return False
