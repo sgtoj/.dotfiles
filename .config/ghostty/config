@@ -4,5 +4,5 @@ font-feature = -liga
 font-feature = -dlig
 macos-titlebar-proxy-icon = hidden
 title = " "
-theme = "Catppuccin Macchiato"
+theme = catppuccin-mocha
 macos-auto-secure-input = true
