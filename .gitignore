@@ -4,6 +4,8 @@
 .config/gh
 .config/go/telemetry
 .config/op
+.local/bin/black
+.local/bin/blackd
 .local/bin/fzf
 .local/bin/posting
 .local/share
