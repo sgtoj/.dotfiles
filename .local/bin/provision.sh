@@ -64,6 +64,7 @@ BREW_PACKAGES=(
   libgit2     # dependency: terraform
   neovim      # alternative to vim
   nvm         # dev tool: node-version-manager
+  opencode    # dev tool: ai tool
   poppler     # dependency: yazi
   ripgrep     # alternative to grep
   shellcheck  # dev tool: shell linting
