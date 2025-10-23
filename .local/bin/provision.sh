@@ -66,12 +66,14 @@ BREW_PACKAGES=(
   nvm         # dev tool: node-version-manager
   opencode    # dev tool: ai tool
   poppler     # dependency: yazi
+  prettier    # dev tool for formatting
   ripgrep     # alternative to grep
   shellcheck  # dev tool: shell linting
   starship    # terminal prompt
   stow        # tool to manage dotfiles
   sevenzip    # dependency: yazi
   tmux        # terminal multiplexer
+  tofu-ls     # dev tool for tf lsp
   tree        # tool to display dir
   tree-sitter # dev tool: code parsing
   yazi        # terminal file manager
