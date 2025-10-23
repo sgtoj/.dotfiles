@@ -1,0 +1,15 @@
+formatters:
+  yaml:
+    command: prettier
+    args:
+      - --parser
+      - yaml
+
+lsp:
+  terraform:
+    command: tofu-ls
+    args:
+      - serve
+    rootPatterns:
+      - .terraform
+      - "*.tf"
