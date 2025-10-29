@@ -1,15 +1,11 @@
+$schema: https://opencode.ai/config.json
+
 formatters:
-  yaml:
-    command: prettier
-    args:
-      - --parser
-      - yaml
+  terraform:
+    command: [tofu, fmt, "$FILE"]
+    extensions: ["*.tf"]
 
 lsp:
   terraform:
-    command: tofu-ls
-    args:
-      - serve
-    rootPatterns:
-      - .terraform
-      - "*.tf"
+    command: [tofu-ls, serve]
+    extensions: [".terraform", "*.tf"]
