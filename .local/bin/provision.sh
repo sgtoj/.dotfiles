@@ -92,6 +92,11 @@ BREW_CASK_PACKAGES=(
   orbstack                    # alternative to docker (mac only)
 )
 
+# ai tools installed with provider's script
+AI_TOOLS=(
+  claudecode
+)
+
 # list of directories to ensure it exists
 DIRECTORIES_TO_CREATE=(
   "$HOME/repos/cs"
@@ -222,6 +227,14 @@ for arkade_package in "${ARKADE_TOOL_PACKAGES[@]}"; do
     log_error "failed to install arkade tool package $arkade_package"
   fi
   log "arkade tool package $arkade_package installed"
+done
+
+# install ai tools
+for ai_tool in "${AI_TOOLS[@]}"; do
+  if [[ $ai_tool == "claudecode" ]]; then
+    log "installing ai tool claude code"
+    curl -fsSL https://claude.ai/install.sh | bash
+  fi
 done
 
 # create directories if they don't exist
