@@ -368,10 +368,4 @@ if [[ "$SHELL" != "/bin/zsh" ]]; then
   chsh -s /bin/zsh
 fi
 
-# set path to ghostty configuration
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  mkdir -p "$HOME/Library/Application\ Support/com.mitchellh.ghostty"
-  echo "config-file = $HOME/.config/ghostty/config" >$HOME/Library/Application\ Support/com.mitchellh.ghostty/config
-fi
-
 log "provisioning complete"
