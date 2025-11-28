@@ -45,40 +45,40 @@ ARKADE_SYSTEM_PACKAGES=(
 
 # macos and linux packages
 BREW_PACKAGES=(
-  awscli      # dev tool
-  bash        # latest bash
-  bat         # alternative to cat
-  btop        # alternative to htop
-  eza         # alternative to ls
-  deno        # dev tool
-  fd          # alternative to find
-  ffmpeg      # dependency: yazi
-  fzf         # tool to fuzzy find
-  git         # latest git
-  gh          # dev tool: github cli
-  go          # dev tool
-  httpie      # alternative to curl
-  imagemagick # dependency: yazi
-  jq          # dev tool
-  lazygit     # terminal ui for git
-  libgit2     # dependency: terraform
-  neovim      # alternative to vim
-  nvm         # dev tool: node-version-manager
-  opencode    # dev tool: ai tool
-  poppler     # dependency: yazi
-  prettier    # dev tool for formatting
-  ripgrep     # alternative to grep
-  shellcheck  # dev tool: shell linting
-  starship    # terminal prompt
-  stow        # tool to manage dotfiles
-  sevenzip    # dependency: yazi
-  tmux        # terminal multiplexer
-  tofu-ls     # dev tool for tf lsp
-  tree        # tool to display dir
-  tree-sitter # dev tool: code parsing
-  yazi        # terminal file manager
-  yq          # dev tool
-  zoxide      # tool to navigate fs
+  awscli           # dev tool
+  bash             # latest bash
+  bat              # alternative to cat
+  btop             # alternative to htop
+  eza              # alternative to ls
+  deno             # dev tool
+  fd               # alternative to find
+  ffmpeg           # dependency: yazi
+  fzf              # tool to fuzzy find
+  git              # latest git
+  gh               # dev tool: github cli
+  go               # dev tool
+  httpie           # alternative to curl
+  imagemagick      # dependency: yazi
+  jq               # dev tool
+  lazygit          # terminal ui for git
+  libgit2          # dependency: terraform
+  neovim           # alternative to vim
+  nvm              # dev tool: node-version-manager
+  poppler          # dependency: yazi
+  prettier         # dev tool for formatting
+  ripgrep          # alternative to grep
+  shellcheck       # dev tool: shell linting
+  starship         # terminal prompt
+  stow             # tool to manage dotfiles
+  sevenzip         # dependency: yazi
+  tmux             # terminal multiplexer
+  tofu-ls          # dev tool for tf lsp
+  tree             # tool to display dir
+  tree-sitter      # dev tool: code parsing
+  yazi             # terminal file manager
+  yq               # dev tool
+  zoxide           # tool to navigate fs
+  sst/tap/opencode # dev tool: ai tool
 )
 
 # macos only packages
