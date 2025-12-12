@@ -9,4 +9,12 @@ g.markdown_fenced_languages = {
 
 o.relativenumber = true
 
--- local o = vim.o
+-- Filetype detection for .env files
+vim.filetype.add {
+  filename = {
+    [".env"] = "dotenv",
+  },
+  pattern = {
+    ["%.env%..*"] = "dotenv",
+  },
+}

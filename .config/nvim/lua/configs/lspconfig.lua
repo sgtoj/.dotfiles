@@ -12,6 +12,14 @@ local servers = {
   ts_ls = {},
 
   bashls = {
+    on_attach = function(client, bufnr)
+      local filename = vim.api.nvim_buf_get_name(bufnr)
+      -- Exclude .env and .env.* files from bashls
+      if filename:match("%.env$") or filename:match("%.env%.") then
+        vim.lsp.buf_detach_client(bufnr, client.id)
+        return false
+      end
+    end,
     settings = {
       bashIde = {
         shellcheckArguments = "-S warning",
