@@ -25,6 +25,7 @@ APT_PACKAGES=(
   bind9-dnsutils # utilities (dig, nslookup, etc)
   clang          # dev tool
   make           # dev tool
+  xclip          # clipboard - fixes copy/paste wsl issues
   zsh            # terminal shell
 )
 
