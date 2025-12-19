@@ -3,17 +3,19 @@ set -e
 
 # -------------------------------------------------------------- description ---
 #
-# cross-platform pbcopy shim for macos and wsl
+# cross-platform pbpaste shim for macos and wsl
 #
 # ------------------------------------------------------------------- script ---
 
 if [ "$(uname -s)" = "Darwin" ]; then
-  /usr/bin/pbcopy "$@"
+  /usr/bin/pbpaste "$@"
 elif grep -qi microsoft /proc/version 2>/dev/null || [ -n "$WSL_DISTRO_NAME" ]; then
-  # Use xclip if available (better integration), fallback to clip.exe
+  # Use xclip if available, fallback to powershell
   if command -v xclip >/dev/null 2>&1; then
-    xclip -selection clipboard "$@"
+    xclip -selection clipboard -o "$@"
+  elif command -v win32yank.exe >/dev/null 2>&1; then
+    win32yank.exe -o --lf
   else
-    cat "$@" | clip.exe
+    powershell.exe -c 'Get-Clipboard' | tr -d '\r'
   fi
 fi
