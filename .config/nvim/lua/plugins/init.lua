@@ -75,6 +75,7 @@ return {
     "github/copilot.vim",
     lazy = false,
     config = function()
+      vim.g.copilot_node_command = vim.fn.expand("~/.local/share/fnm/aliases/default/bin/node")
       vim.g.copilot_no_tab_map = true
       vim.keymap.set("i", "<C-y>", 'copilot#Accept("\\<CR>")', {
         expr = true,
