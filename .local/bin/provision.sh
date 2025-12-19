@@ -11,7 +11,7 @@
 # - creates directories for organizing workspaces
 # - clones and applies dotfiles using stow
 # - sets up ssh for github access
-# - configures node.js via nvm
+# - configures node.js via fnm
 # - switches the default shell to zsh
 # - configures ghostty on macos
 
@@ -64,7 +64,7 @@ BREW_PACKAGES=(
   lazygit          # terminal ui for git
   libgit2          # dependency: terraform
   neovim           # alternative to vim
-  nvm              # dev tool: node-version-manager
+  fnm              # dev tool: fast-node-manager
   poppler          # dependency: yazi
   prettier         # dev tool for formatting
   ripgrep          # alternative to grep
@@ -300,20 +300,18 @@ if [ -n "$DOTFILES_GIT_PATH" ]; then
   popd >/dev/null || exit
 fi
 
-# install latest node lts using nvm and set as default
-NVM_INSTALL_PATH=$(brew --prefix nvm)
-export NVM_DIR="$HOME/.nvm"
-source "$NVM_INSTALL_PATH/nvm.sh"
-if command -v nvm &>/dev/null; then
-  log "installing latest node lts using nvm"
-  nvm install --lts
+# install node using fnm and set as default
+if command -v fnm &>/dev/null; then
+  eval "$(fnm env)"
+  log "installing node v25 using fnm"
+  fnm install 25
   if [[ $? -ne 0 ]]; then
-    log_error "failed to install latest node lts"
+    log_error "failed to install node v25"
   fi
-  log "setting latest node lts as default"
-  nvm alias default lts/*
+  log "setting node v25 as default"
+  fnm default 25
 else
-  log_error "nvm is not installed"
+  log_error "fnm is not installed"
 fi
 
 # ensure ~/.ssh/config exists and configure github.com key

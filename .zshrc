@@ -7,7 +7,7 @@ export EDITOR=nvim
 export XDG_CACHE_HOME=${HOME}/.cache
 export XDG_CONFIG_HOME=${HOME}/.config
 export XDG_DATA_HOME=${HOME}/.local/share
-export PATH=/opt/nvim/bin:${HOME}/.nvm/versions/node/v22.20.0/bin:${HOME}/.local/bin:${HOME}/go/bin:${HOME}/.arkade/bin/:${PATH}
+export PATH=/opt/nvim/bin:${HOME}/.local/bin:${HOME}/go/bin:${HOME}/.arkade/bin/:${PATH}
 
 export BAT_THEME="Catppuccin Mocha"
 export FZF_DEFAULT_OPTS=" \
@@ -92,12 +92,9 @@ if [ ! -d "$HOME/.cache/bat" ] && alias cat | grep 'bat' >/dev/null; then
   cat cache --build 2>/dev/null
 fi
 
-# setup - node version manager (nvm)
-NVM_INSTALL_PATH=$(brew --prefix nvm 2>/dev/null || echo "0")
-if [[ "${NVM_INSTALL_PATH}" != "0" ]]; then
-  export NVM_DIR="$HOME/.nvm"
-  [ -s "$NVM_INSTALL_PATH/nvm.sh" ] && . "$NVM_INSTALL_PATH/nvm.sh" --no-use # loads nvm
-  [ -s "$NVM_INSTALL_PATH/etc/bash_completion.d/nvm" ] && . "$NVM_INSTALL_PATH/etc/bash_completion.d/nvm"  # loads nvm bash_completion
+# setup - fast node manager (fnm)
+if command -v fnm &>/dev/null; then
+  eval "$(fnm env --use-on-cd)"
 fi
 
 # keybindings (vim)
