@@ -152,6 +152,8 @@ eval "$($BREW_PREFIX/bin/brew shellenv)"
 # ensure homebrew is up to date
 log "updating homebrew"
 brew update
+log "upgrading existing homebrew packages"
+brew upgrade
 
 # install essential packages
 for package in "${BREW_PACKAGES[@]}"; do
@@ -187,9 +189,9 @@ for package in "${APT_PACKAGES[@]}"; do
   if [[ $OSTYPE == "darwin"* ]]; then
     continue
   fi
-  if ! command -v "$package" &>/dev/null; then
+  if ! dpkg -l | grep -q "^ii  $package "; then
     log "installing $package"
-    sudo apt install "$package"
+    sudo apt install -y "$package"
     if [[ $? -ne 0 ]]; then
       log_error "failed to install $package"
     fi
@@ -377,9 +379,10 @@ if [[ "$OSTYPE" != "darwin"* && ! $(groups $USER) =~ \bdocker\b ]]; then
 fi
 
 # set zsh as the default shell
-if [[ "$SHELL" != "/bin/zsh" ]]; then
-  log "changing default shell to zsh"
-  chsh -s /bin/zsh
+ZSH_PATH=$(command -v zsh)
+if [[ "$SHELL" != "$ZSH_PATH" ]]; then
+  log "changing default shell to zsh at $ZSH_PATH"
+  chsh -s "$ZSH_PATH"
 fi
 
 log "provisioning complete"
