@@ -13,7 +13,6 @@
 # - sets up ssh for github access
 # - configures node.js via fnm
 # - switches the default shell to zsh
-# - configures ghostty on macos
 
 # ------------------------------------------------------------ configuration ---
 
