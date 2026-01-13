@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+#
+# daily-report - Generate a summary report from daily log metadata using OpenCode
+#
+# Usage:
+#   daily-report                    # Interactive mode
+#   daily-report --date 2026-01-06  # Specific date
+#
+
+set -euo pipefail
+
+# Configuration
+LOG_DIR="${DAILY_LOG_DIR:-$HOME/notes/daily}"
+DATE_FORMAT="%Y-%m-%d"
+
+# Check dependencies
+check_dependencies() {
+    local missing=()
+    
+    if ! command -v opencode &> /dev/null; then
+        missing+=("opencode")
+    fi
+    
+    if ! command -v gum &> /dev/null; then
+        missing+=("gum (charmbracelet/gum)")
+    fi
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "Error: Missing required dependencies:"
+        for dep in "${missing[@]}"; do
+            echo "  - $dep"
+        done
+        exit 1
+    fi
+}
+
+# Validate date format (YYYY-MM-DD)
+validate_date() {
+    local date_str="$1"
+    
+    if ! [[ "$date_str" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        return 1
+    fi
+    
+    if ! date -j -f "$DATE_FORMAT" "$date_str" &> /dev/null; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Get date interactively
+get_date() {
+    local default_date
+    default_date=$(date +"$DATE_FORMAT")
+    
+    local input_date
+    input_date=$(gum input \
+        --placeholder "YYYY-MM-DD" \
+        --value "$default_date" \
+        --prompt "Date: " \
+        --width 20)
+    
+    if [[ -z "$input_date" ]]; then
+        echo "$default_date"
+        return
+    fi
+    
+    if ! validate_date "$input_date"; then
+        gum style --foreground 196 "Invalid date format. Please use YYYY-MM-DD"
+        get_date
+        return
+    fi
+    
+    echo "$input_date"
+}
+
+# Extract YAML frontmatter from markdown file
+extract_frontmatter() {
+    local file="$1"
+    
+    awk '
+        /^---$/ {
+            if (count == 0) {
+                count++
+                next
+            } else {
+                exit
+            }
+        }
+        count == 1 { print }
+    ' "$file"
+}
+
+# Extract content after frontmatter (excluding the report placeholder comment)
+extract_content_after_frontmatter() {
+    local file="$1"
+    
+    awk '
+        /^---$/ {
+            count++
+            if (count == 2) {
+                in_content = 1
+                next
+            }
+        }
+        in_content { print }
+    ' "$file"
+}
+
+# Main function
+main() {
+    local date=""
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -d|--date)
+                date="$2"
+                shift 2
+                ;;
+            -h|--help)
+                echo "Usage: daily-report [OPTIONS]"
+                echo ""
+                echo "Generate a summary report from daily log metadata using OpenCode."
+                echo ""
+                echo "Options:"
+                echo "  -d, --date DATE    Date in YYYY-MM-DD format (default: today)"
+                echo "  -h, --help         Show this help message"
+                echo ""
+                echo "Environment:"
+                echo "  DAILY_LOG_DIR      Directory for log files (default: ~/notes/daily)"
+                exit 0
+                ;;
+            *)
+                echo "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Check dependencies
+    check_dependencies
+    
+    # Get date (interactive if not provided)
+    if [[ -z "$date" ]]; then
+        date=$(get_date)
+    else
+        if ! validate_date "$date"; then
+            gum style --foreground 196 "Invalid date format: $date. Please use YYYY-MM-DD"
+            exit 1
+        fi
+    fi
+    
+    local log_file="$LOG_DIR/$date.md"
+    
+    # Check if file exists
+    if [[ ! -f "$log_file" ]]; then
+        gum style --foreground 196 "No log file found for $date"
+        gum style --faint "Expected: $log_file"
+        echo ""
+        gum style "Run 'daily-log --date $date' first to create the log."
+        exit 1
+    fi
+    
+    gum style \
+        --border rounded \
+        --border-foreground 99 \
+        --padding "0 1" \
+        --margin "1 0" \
+        "Generating report for $date..."
+    
+    # Extract frontmatter
+    local metadata
+    metadata=$(extract_frontmatter "$log_file")
+    
+    if [[ -z "$metadata" ]]; then
+        gum style --foreground 196 "No metadata found in $log_file"
+        exit 1
+    fi
+    
+    # Build the prompt for OpenCode
+    local prompt
+    prompt=$(cat <<'PROMPT_EOF'
+You are analyzing a daily activity log. Based on the YAML metadata below, write a concise summary of what was accomplished.
+
+**Instructions:**
+1. Read the metadata containing commits, PRs created, PRs merged, and other notes
+2. Write a brief, well-organized summary focusing on:
+   - Key themes or areas of work
+   - Notable accomplishments
+   - Impact of the changes
+3. Use markdown formatting with appropriate headers
+4. Keep it concise but informative (2-4 paragraphs max)
+5. If there's minimal activity, acknowledge that briefly
+
+**Important:** 
+- Update the markdown file by REPLACING everything after the frontmatter (after the second `---`) with your report
+- Keep the YAML frontmatter exactly as-is (do not modify anything between the `---` markers)
+- Start your report with `## Summary` header
+
+PROMPT_EOF
+)
+    
+    # Run opencode with the log file
+    gum spin --spinner dot --title "OpenCode is generating report..." -- \
+        opencode run \
+            --file "$log_file" \
+            "$prompt
+
+---
+**Metadata for $date:**
+\`\`\`yaml
+$metadata
+\`\`\`
+
+**File to update:** $log_file"
+    
+    echo ""
+    gum style \
+        --border double \
+        --border-foreground 212 \
+        --padding "1 2" \
+        "Report generated!"
+    
+    echo ""
+    gum style --foreground 99 "View with: cat $log_file"
+    
+    # Offer to view the file
+    if gum confirm "View the report now?"; then
+        echo ""
+        gum format < "$log_file"
+    fi
+}
+
+main "$@"

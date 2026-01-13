@@ -1,0 +1,364 @@
+#!/usr/bin/env bash
+#
+# daily-log - Record daily GitHub activity and notes to a markdown file
+#
+# Usage:
+#   daily-log                           # Interactive mode
+#   daily-log --date 2026-01-06         # Specific date
+#   daily-log --other "Did code review" # Today with notes
+#   daily-log -d 2026-01-06 -o "notes"  # Fully non-interactive
+#
+
+set -euo pipefail
+
+# Configuration
+LOG_DIR="${DAILY_LOG_DIR:-$HOME/notes/daily}"
+DATE_FORMAT="%Y-%m-%d"
+
+# Colors for fallback error messages
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Check dependencies
+check_dependencies() {
+    local missing=()
+    
+    if ! command -v gh &> /dev/null; then
+        missing+=("gh (GitHub CLI)")
+    fi
+    
+    if ! command -v gum &> /dev/null; then
+        missing+=("gum (charmbracelet/gum)")
+    fi
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo -e "${RED}Error: Missing required dependencies:${NC}"
+        for dep in "${missing[@]}"; do
+            echo "  - $dep"
+        done
+        echo ""
+        echo "Install with:"
+        echo "  brew install gh gum"
+        exit 1
+    fi
+}
+
+# Validate date format (YYYY-MM-DD)
+validate_date() {
+    local date_str="$1"
+    
+    # Check format with regex
+    if ! [[ "$date_str" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        return 1
+    fi
+    
+    # Validate it's a real date
+    if ! date -j -f "$DATE_FORMAT" "$date_str" &> /dev/null; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Get date interactively or use default
+get_date() {
+    local default_date
+    default_date=$(date +"$DATE_FORMAT")
+    
+    local input_date
+    input_date=$(gum input \
+        --placeholder "YYYY-MM-DD" \
+        --value "$default_date" \
+        --prompt "Date: " \
+        --width 20)
+    
+    if [[ -z "$input_date" ]]; then
+        echo "$default_date"
+        return
+    fi
+    
+    if ! validate_date "$input_date"; then
+        gum style --foreground 196 "Invalid date format. Please use YYYY-MM-DD"
+        get_date  # Recursively ask again
+        return
+    fi
+    
+    echo "$input_date"
+}
+
+# Get "other" notes interactively
+get_other_notes() {
+    gum write \
+        --placeholder "Additional notes (Ctrl+D to finish, Esc to skip)..." \
+        --width 80 \
+        --height 6 \
+        --char-limit 0 || echo ""
+}
+
+# Fetch commits for a given date
+fetch_commits() {
+    local date="$1"
+    
+    gum spin --spinner dot --title "Fetching commits..." -- \
+        gh search commits \
+            --author=@me \
+            --author-date="$date" \
+            --json repository,sha,commit \
+            --limit 100 2>/dev/null || echo "[]"
+}
+
+# Fetch PRs created on a given date
+fetch_prs_created() {
+    local date="$1"
+    
+    gum spin --spinner dot --title "Fetching PRs created..." -- \
+        gh search prs \
+            --author=@me \
+            --created="$date" \
+            --json repository,number,title,url \
+            --limit 100 2>/dev/null || echo "[]"
+}
+
+# Fetch PRs merged on a given date
+fetch_prs_merged() {
+    local date="$1"
+    
+    gum spin --spinner dot --title "Fetching PRs merged..." -- \
+        gh search prs \
+            --author=@me \
+            --merged-at="$date" \
+            --json repository,number,title,url \
+            --limit 100 2>/dev/null || echo "[]"
+}
+
+# Convert commits JSON to YAML format
+commits_to_yaml() {
+    local json="$1"
+    
+    if [[ "$json" == "[]" ]] || [[ -z "$json" ]]; then
+        echo "commits: []"
+        return
+    fi
+    
+    echo "commits:"
+    echo "$json" | jq -r '.[] | "  - repo: \"\(.repository.nameWithOwner)\"\n    sha: \"\(.sha[0:7])\"\n    message: \"\(.commit.message | split("\n")[0] | gsub("\""; "\\\""))\"\n    url: \"https://github.com/\(.repository.nameWithOwner)/commit/\(.sha)\""'
+}
+
+# Convert PRs JSON to YAML format
+prs_to_yaml() {
+    local json="$1"
+    local key="$2"
+    
+    if [[ "$json" == "[]" ]] || [[ -z "$json" ]]; then
+        echo "${key}: []"
+        return
+    fi
+    
+    echo "${key}:"
+    echo "$json" | jq -r '.[] | "  - repo: \"\(.repository.nameWithOwner)\"\n    number: \(.number)\n    title: \"\(.title | gsub("\""; "\\\""))\"\n    url: \"\(.url)\""'
+}
+
+# Format other notes as YAML
+other_to_yaml() {
+    local notes="$1"
+    
+    if [[ -z "$notes" ]]; then
+        echo 'other: ""'
+        return
+    fi
+    
+    echo "other: |"
+    echo "$notes" | sed 's/^/  /'
+}
+
+# Read existing "other" from file if it exists
+read_existing_other() {
+    local file="$1"
+    
+    if [[ ! -f "$file" ]]; then
+        echo ""
+        return
+    fi
+    
+    # Extract the "other" field from YAML frontmatter
+    # This handles both single-line and multi-line formats
+    awk '
+        /^---$/ { in_frontmatter = !in_frontmatter; next }
+        in_frontmatter && /^other:/ {
+            if (/^other: \|/) {
+                # Multi-line format
+                multiline = 1
+                next
+            } else {
+                # Single-line format
+                gsub(/^other: "?|"?$/, "")
+                print
+                exit
+            }
+        }
+        in_frontmatter && multiline && /^  / {
+            gsub(/^  /, "")
+            print
+        }
+        in_frontmatter && multiline && !/^  / && !/^$/ {
+            exit
+        }
+    ' "$file"
+}
+
+# Generate the markdown file
+generate_markdown() {
+    local date="$1"
+    local commits_yaml="$2"
+    local prs_created_yaml="$3"
+    local prs_merged_yaml="$4"
+    local other_yaml="$5"
+    
+    cat <<EOF
+---
+date: "$date"
+$commits_yaml
+$prs_created_yaml
+$prs_merged_yaml
+$other_yaml
+---
+
+# Daily Log - $date
+
+<!-- Run 'daily-report --date $date' to generate a summary -->
+EOF
+}
+
+# Main function
+main() {
+    local date=""
+    local other=""
+    local other_provided=false
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -d|--date)
+                date="$2"
+                shift 2
+                ;;
+            -o|--other)
+                other="$2"
+                other_provided=true
+                shift 2
+                ;;
+            -h|--help)
+                echo "Usage: daily-log [OPTIONS]"
+                echo ""
+                echo "Record daily GitHub activity and notes to a markdown file."
+                echo ""
+                echo "Options:"
+                echo "  -d, --date DATE    Date in YYYY-MM-DD format (default: today)"
+                echo "  -o, --other NOTES  Additional notes to include"
+                echo "  -h, --help         Show this help message"
+                echo ""
+                echo "Environment:"
+                echo "  DAILY_LOG_DIR      Directory for log files (default: ~/notes/daily)"
+                exit 0
+                ;;
+            *)
+                echo "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Check dependencies
+    check_dependencies
+    
+    # Get date (interactive if not provided)
+    if [[ -z "$date" ]]; then
+        date=$(get_date)
+    else
+        if ! validate_date "$date"; then
+            gum style --foreground 196 "Invalid date format: $date. Please use YYYY-MM-DD"
+            exit 1
+        fi
+    fi
+    
+    # Ensure log directory exists
+    mkdir -p "$LOG_DIR"
+    
+    local log_file="$LOG_DIR/$date.md"
+    
+    # Handle "other" notes
+    if [[ "$other_provided" == false ]]; then
+        # Check for existing notes
+        local existing_other
+        existing_other=$(read_existing_other "$log_file")
+        
+        if [[ -n "$existing_other" ]]; then
+            gum style --foreground 214 "Existing notes found. Enter new notes to replace, or leave empty to keep:"
+            echo ""
+            gum style --faint "$existing_other"
+            echo ""
+        fi
+        
+        other=$(get_other_notes)
+        
+        # If no new input and existing notes exist, keep existing
+        if [[ -z "$other" ]] && [[ -n "$existing_other" ]]; then
+            other="$existing_other"
+        fi
+    fi
+    
+    gum style \
+        --border rounded \
+        --border-foreground 99 \
+        --padding "0 1" \
+        --margin "1 0" \
+        "Fetching GitHub activity for $date..."
+    
+    # Fetch GitHub activity
+    local commits_json prs_created_json prs_merged_json
+    commits_json=$(fetch_commits "$date")
+    prs_created_json=$(fetch_prs_created "$date")
+    prs_merged_json=$(fetch_prs_merged "$date")
+    
+    # Convert to YAML
+    local commits_yaml prs_created_yaml prs_merged_yaml other_yaml
+    commits_yaml=$(commits_to_yaml "$commits_json")
+    prs_created_yaml=$(prs_to_yaml "$prs_created_json" "prs_created")
+    prs_merged_yaml=$(prs_to_yaml "$prs_merged_json" "prs_merged")
+    other_yaml=$(other_to_yaml "$other")
+    
+    # Generate and save markdown
+    generate_markdown "$date" "$commits_yaml" "$prs_created_yaml" "$prs_merged_yaml" "$other_yaml" > "$log_file"
+    
+    # Count activity
+    local commit_count pr_created_count pr_merged_count
+    commit_count=$(echo "$commits_json" | jq 'length')
+    pr_created_count=$(echo "$prs_created_json" | jq 'length')
+    pr_merged_count=$(echo "$prs_merged_json" | jq 'length')
+    
+    # Display summary
+    echo ""
+    gum style \
+        --border double \
+        --border-foreground 212 \
+        --padding "1 2" \
+        --margin "1 0" \
+        "Daily Log Created" \
+        "" \
+        "Date: $date" \
+        "File: $log_file" \
+        "" \
+        "Activity:" \
+        "  Commits: $commit_count" \
+        "  PRs Created: $pr_created_count" \
+        "  PRs Merged: $pr_merged_count"
+    
+    if [[ -n "$other" ]]; then
+        gum style --faint "  Other notes: included"
+    fi
+    
+    echo ""
+    gum style --foreground 99 "Run 'daily-report --date $date' to generate a summary."
+}
+
+main "$@"
