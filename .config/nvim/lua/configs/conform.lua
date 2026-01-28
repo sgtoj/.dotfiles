@@ -2,6 +2,8 @@ local options = {
   formatters_by_ft = {
     go = { "goimports", "gofmt" },
     lua = { "stylua" },
+    markdown = { "mdformat" },
+    ["markdown.mdx"] = { "mdformat" },
     python = { "black" },
     sh = { "shfmt" },
     terraform = { "terraform_fmt" },
@@ -14,6 +16,11 @@ local options = {
   formatters = {
     black = { prepend_args = { "--fast" } },
     deno_fmt = { command = "deno", args = { "fmt", "-" } },
+    mdformat = {
+      command = "mdformat",
+      args = { "$FILENAME" },
+      stdin = false,
+    },
   },
 
   format_on_save = {

@@ -97,6 +97,12 @@ AI_TOOLS=(
   claudecode
 )
 
+# python tools installed with uv tool
+UV_TOOLS=(
+  "black"
+  "mdformat --with mdformat-gfm"
+)
+
 # list of directories to ensure it exists
 DIRECTORIES_TO_CREATE=(
   "$HOME/repos/cs"
@@ -236,6 +242,31 @@ for ai_tool in "${AI_TOOLS[@]}"; do
   if [[ $ai_tool == "claudecode" ]]; then
     log "installing ai tool claude code"
     curl -fsSL https://claude.ai/install.sh | bash
+  fi
+done
+
+# install uv if not already installed
+if ! command -v uv &>/dev/null; then
+  log "installing uv"
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  if [[ $? -ne 0 ]]; then
+    log_error "failed to install uv"
+  fi
+else
+  log "uv already installed"
+fi
+
+# install python tools with uv
+for uv_tool in "${UV_TOOLS[@]}"; do
+  tool_name=$(echo "$uv_tool" | awk '{print $1}')
+  if ! uv tool list 2>/dev/null | grep -q "^$tool_name "; then
+    log "installing uv tool $tool_name"
+    eval "uv tool install $uv_tool"
+    if [[ $? -ne 0 ]]; then
+      log_error "failed to install uv tool $tool_name"
+    fi
+  else
+    log "uv tool $tool_name already installed"
   fi
 done
 

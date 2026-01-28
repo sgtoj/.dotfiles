@@ -7,6 +7,7 @@
 .local/bin/black
 .local/bin/blackd
 .local/bin/claude
+.local/bin/mdformat
 .local/bin/fzf
 .local/bin/posting
 .local/share
