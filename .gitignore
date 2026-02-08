@@ -4,6 +4,7 @@
 .config/gh
 .config/go/telemetry
 .config/op
+.config/sops
 .local/bin/black
 .local/bin/blackd
 .local/bin/claude
