@@ -27,39 +27,17 @@ return {
   },
   {
     "nvim-treesitter/nvim-treesitter",
-    opts = {
-      auto_install = true,
-      ensure_installed = {
-        "bash",
-        "css",
-        "editorconfig",
-        "go",
-        "gomod",
-        "gosum",
-        "hcl",
-        "html",
-        "javascript",
-        "json",
-        "jsonc",
-        "make",
-        "lua",
-        "python",
-        "scss",
-        "sql",
-        "terraform",
-        "toml",
-        "tmux",
-        "typescript",
-        "vim",
-        "vimdoc",
-        "yaml",
-      },
-      highlight = {
-        disable = {
-          "dockerfile", -- broken
-        },
-      },
-    },
+    branch = "main",
+    -- main branch does not support lazy-loading
+    lazy = false,
+    -- fully override NvChad's spec (which uses archived-branch options)
+    event = false,
+    cmd = false,
+    opts = false,
+    build = ":TSUpdate",
+    config = function()
+      require "configs.treesitter"
+    end,
   },
   {
     "sphamba/smear-cursor.nvim",
