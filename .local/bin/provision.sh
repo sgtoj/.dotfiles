@@ -74,7 +74,8 @@ BREW_PACKAGES=(
   tmux             # terminal multiplexer
   tofu-ls          # dev tool for tf lsp
   tree             # tool to display dir
-  tree-sitter      # dev tool: code parsing
+  tree-sitter      # dev tool: code parsing (C library)
+  tree-sitter-cli  # dev tool: code parsing (CLI, required by nvim-treesitter main)
   yazi             # terminal file manager
   yq               # dev tool
   zoxide           # tool to navigate fs
