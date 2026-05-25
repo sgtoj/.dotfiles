@@ -97,6 +97,11 @@ if command -v fnm &>/dev/null; then
   eval "$(fnm env --use-on-cd --log-level=quiet)"
 fi
 
+# setup - atmos completion
+if command -v atmos &>/dev/null; then
+  source <(atmos completion zsh)
+fi
+
 # keybindings (vim)
 export KEYTIMEOUT=30 # 100 units is 1s
 bindkey -v
