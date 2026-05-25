@@ -5,6 +5,7 @@
 .config/go/telemetry
 .config/op
 .config/sops
+.config/opencode/opencode.json
 .local/bin/black
 .local/bin/blackd
 .local/bin/claude
