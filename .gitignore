@@ -6,6 +6,7 @@
 .config/op
 .config/sops
 .config/opencode/opencode.json
+.local/bin/atmos
 .local/bin/black
 .local/bin/blackd
 .local/bin/claude
