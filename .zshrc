@@ -17,11 +17,11 @@ export FZF_DEFAULT_OPTS=" \
 --color=selected-bg:#45475a \
 --multi"
 
-eval "$(curl -sSfL https://raw.githubusercontent.com/junegunn/fzf/master/shell/completion.zsh)"
 eval "$(zoxide init --cmd cd zsh)"
 
 if [[ -f "/opt/homebrew/bin/brew" ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
+  source "/opt/homebrew/opt/fzf/shell/completion.zsh"
 fi
 
 # zinit - load
