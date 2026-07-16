@@ -8,8 +8,13 @@
 .local/bin/black
 .local/bin/blackd
 .local/bin/claude
+.local/bin/codex*
 .local/bin/mdformat
 .local/bin/fzf
 .local/bin/posting
 .local/share
 .local/state
+
+
+# tmp
+.config/opencode/skill/atmos-rollout
