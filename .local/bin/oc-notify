@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+#
+# oc-notify -- surface opencode panes that need attention, across every tmux session.
+#
+# Driven by ~/.config/opencode/plugin/tmux-notify.ts. State lives in tmux user options
+# so the status bar is event-driven and needs no polling:
+#
+#   @oc_state    pane-scoped, the source of truth (waiting|done|error)
+#   @oc_win      window-scoped, highest severity in that window (drives the status bar)
+#   @oc_summary  global, pre-rendered status-right segment
+#
+# @oc_state is deliberately never set at window/session/global scope. tmux option lookup
+# falls back pane -> window -> session -> global, so reusing one name would make unflagged
+# panes inherit their window's flag and corrupt every count.
+#
+# Usage:
+#   oc-notify set <pane> <waiting|done|error> <label> [detail]
+#   oc-notify clear <pane>
+#   oc-notify jump                 # focus the most urgent flagged pane
+#   oc-notify jump-to <pane>       # focus one pane (used by notification clicks)
+#   oc-notify refresh              # recompute aggregates, drop stale flags
+
+set -uo pipefail
+
+# Notification clicks invoke this through terminal-notifier's -execute, which runs with a
+# minimal PATH that lacks Homebrew. Restore enough to find tmux/terminal-notifier.
+PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+export PATH
+
+OPT="@oc_state"
+WOPT="@oc_win"
+SUMMARY_OPT="@oc_summary"
+SOUND_DIR="/System/Library/Sounds"
+TERMINAL_APP="${OC_NOTIFY_TERMINAL:-Ghostty}"
+
+TMUX_BIN="$(command -v tmux 2>/dev/null || true)"
+[ -n "$TMUX_BIN" ] || TMUX_BIN="/opt/homebrew/bin/tmux"
+[ -x "$TMUX_BIN" ] || exit 0
+
+# Absolute path to this script, so -execute works from any working directory.
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+SELF="$SELF_DIR/$(basename -- "${BASH_SOURCE[0]}")"
+
+die() {
+  printf 'oc-notify: %s\n' "$1" >&2
+  exit 2
+}
+
+rank_for() {
+  case "${1:-}" in
+    waiting) printf '3' ;;
+    error) printf '2' ;;
+    done) printf '1' ;;
+    *) printf '0' ;;
+  esac
+}
+
+sound_for() {
+  case "${1:-}" in
+    waiting) printf 'Funk' ;;
+    error) printf 'Basso' ;;
+    *) printf 'Tink' ;;
+  esac
+}
+
+play() {
+  local file
+  file="$SOUND_DIR/$(sound_for "$1").aiff"
+  [ -r "$file" ] || return 0
+  afplay "$file" >/dev/null 2>&1 &
+}
+
+# Escape a string for use as an AppleScript literal.
+osa_quote() {
+  local s="${1//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '"%s"' "$s"
+}
+
+# True when the user is demonstrably looking at this pane right now: it is the active
+# pane, of the active window, in a session whose attached client reports focus. tmux
+# exposes "focused" in client_flags because focus-events is on, so this needs no osascript.
+watching() {
+  local pane="$1" info sess csess cflags
+  info="$($TMUX_BIN display-message -p -t "$pane" '#{session_name}|#{pane_active}#{window_active}' 2>/dev/null)" || return 1
+  [ "${info##*|}" = "11" ] || return 1
+  sess="${info%%|*}"
+
+  while IFS='|' read -r csess cflags; do
+    [ "$csess" = "$sess" ] || continue
+    case "$cflags" in
+      *focused*) return 0 ;;
+    esac
+  done < <($TMUX_BIN list-clients -F '#{client_session}|#{client_flags}' 2>/dev/null)
+
+  return 1
+}
+
+summary_string() {
+  local nwait="$1" nerr="$2" ndone="$3" out=""
+  [ "$nwait" -gt 0 ] && out="$out#[fg=#{@thm_red}] ◆$nwait"
+  [ "$nerr" -gt 0 ] && out="$out#[fg=#{@thm_peach}] ▲$nerr"
+  [ "$ndone" -gt 0 ] && out="$out#[fg=#{@thm_yellow}] ●$ndone"
+  [ -n "$out" ] && out="$out#[fg=default] "
+  printf '%s' "$out"
+}
+
+# Recompute window aggregates and the global summary from pane state, dropping flags for
+# panes where opencode has since exited so dead sessions self-heal.
+refresh() {
+  local pane st win cmd flagged="" nwait=0 nerr=0 ndone=0
+
+  while IFS='|' read -r pane st win cmd; do
+    [ -n "${pane:-}" ] || continue
+    [ -n "${st:-}" ] || continue
+
+    if [ "$cmd" != "opencode" ]; then
+      $TMUX_BIN set-option -pu -t "$pane" "$OPT" 2>/dev/null
+      continue
+    fi
+
+    flagged="$flagged$win|$st
+"
+    case "$st" in
+      waiting) nwait=$((nwait + 1)) ;;
+      error) nerr=$((nerr + 1)) ;;
+      done) ndone=$((ndone + 1)) ;;
+    esac
+  done < <($TMUX_BIN list-panes -a -F "#{pane_id}|#{${OPT}}|#{window_id}|#{pane_current_command}" 2>/dev/null)
+
+  local cur want wr lw lst r
+  while IFS='|' read -r win cur; do
+    [ -n "${win:-}" ] || continue
+
+    want=""
+    wr=0
+    while IFS='|' read -r lw lst; do
+      [ "${lw:-}" = "$win" ] || continue
+      r="$(rank_for "$lst")"
+      if [ "$r" -gt "$wr" ]; then
+        wr="$r"
+        want="$lst"
+      fi
+    done <<< "$flagged"
+
+    [ "$want" = "${cur:-}" ] && continue
+    if [ -n "$want" ]; then
+      $TMUX_BIN set-option -w -t "$win" "$WOPT" "$want" 2>/dev/null
+    else
+      $TMUX_BIN set-option -wu -t "$win" "$WOPT" 2>/dev/null
+    fi
+  done < <($TMUX_BIN list-windows -a -F "#{window_id}|#{${WOPT}}" 2>/dev/null)
+
+  $TMUX_BIN set-option -g "$SUMMARY_OPT" "$(summary_string "$nwait" "$nerr" "$ndone")" 2>/dev/null
+}
+
+notify() {
+  local pane="$1" state="$2" label="$3" detail="$4" loc title subtitle message
+  loc="$($TMUX_BIN display-message -p -t "$pane" '#{session_name}:#{window_index}' 2>/dev/null)" || loc="$pane"
+
+  # A finished turn is deliberately quiet: sound plus status bar, but no banner. With
+  # several agents running, banners on every completion become noise.
+  if [ "$state" = "done" ]; then
+    play "$state"
+    return 0
+  fi
+
+  case "$state" in
+    waiting) title="opencode needs you" ;;
+    error) title="opencode failed" ;;
+    *) title="opencode" ;;
+  esac
+  subtitle="$label — $loc"
+  message="${detail:-$loc}"
+
+  if command -v terminal-notifier >/dev/null 2>&1; then
+    # -group collapses repeat alerts for one pane instead of stacking them.
+    # -execute makes the banner clickable: it jumps straight to the pane.
+    terminal-notifier \
+      -title "$title" \
+      -subtitle "$subtitle" \
+      -message "$message" \
+      -sound "$(sound_for "$state")" \
+      -group "oc-notify-$pane" \
+      -execute "'$SELF' jump-to '$pane'" >/dev/null 2>&1 &
+    return 0
+  fi
+
+  play "$state"
+  osascript \
+    -e "display notification $(osa_quote "$message") with title $(osa_quote "$title") subtitle $(osa_quote "$subtitle")" \
+    >/dev/null 2>&1 &
+}
+
+cmd_set() {
+  local pane="${1:-}" state="${2:-}" label="${3:-opencode}" detail="${4:-}" cur
+  [ -n "$pane" ] || die "set: pane required"
+  case "$state" in
+    waiting | done | error) ;;
+    *) die "set: state must be waiting|done|error" ;;
+  esac
+
+  # Pane vanished between the event and now. display-message exits 0 for an unknown
+  # target and just prints nothing, so test the output rather than the status.
+  [ -n "$($TMUX_BIN display-message -p -t "$pane" '#{pane_id}' 2>/dev/null)" ] || exit 0
+
+  # Already being watched, so there is nothing to draw attention to.
+  if watching "$pane"; then
+    cmd_clear "$pane"
+    return 0
+  fi
+
+  # Dedupe against real tmux state rather than anything remembered by the caller. If the
+  # flag was cleared out of band (the user visited the pane), a repeat alert is correct
+  # and must not be swallowed.
+  cur="$($TMUX_BIN show-options -pqv -t "$pane" "$OPT" 2>/dev/null)" || cur=""
+  [ "${cur:-}" = "$state" ] && return 0
+
+  $TMUX_BIN set-option -p -t "$pane" "$OPT" "$state" 2>/dev/null || exit 0
+  refresh
+  notify "$pane" "$state" "$label" "$detail"
+}
+
+cmd_clear() {
+  local pane="${1:-}" cur
+  [ -n "$pane" ] || die "clear: pane required"
+
+  # Fast path: pane-focus-in fires on every pane switch, so skip the rescan when this
+  # pane carries no flag.
+  cur="$($TMUX_BIN show-options -pqv -t "$pane" "$OPT" 2>/dev/null)" || cur=""
+  [ -n "${cur:-}" ] || return 0
+
+  $TMUX_BIN set-option -pu -t "$pane" "$OPT" 2>/dev/null
+  refresh
+}
+
+cmd_jump_to() {
+  local pane="${1:-}" info sess win client
+  [ -n "$pane" ] || die "jump-to: pane required"
+
+  info="$($TMUX_BIN display-message -p -t "$pane" '#{session_name}|#{window_id}' 2>/dev/null)"
+  [ -n "$info" ] || return 0
+  sess="${info%%|*}"
+  win="${info##*|}"
+  [ -n "$sess" ] && [ -n "$win" ] || return 0
+
+  client="$($TMUX_BIN list-clients -F '#{client_name}' 2>/dev/null | head -1)"
+  [ -n "$client" ] && $TMUX_BIN switch-client -c "$client" -t "$sess" 2>/dev/null
+  $TMUX_BIN select-window -t "$win" 2>/dev/null
+  $TMUX_BIN select-pane -t "$pane" 2>/dev/null
+
+  cmd_clear "$pane"
+  open -a "$TERMINAL_APP" 2>/dev/null || true
+}
+
+cmd_jump() {
+  local want pane st
+  # 'done' is quoted so it reads as a word rather than a loop terminator.
+  for want in waiting error 'done'; do
+    while IFS='|' read -r pane st; do
+      [ "${st:-}" = "$want" ] || continue
+      cmd_jump_to "$pane"
+      return 0
+    done < <($TMUX_BIN list-panes -a -F "#{pane_id}|#{${OPT}}" 2>/dev/null)
+  done
+  $TMUX_BIN display-message "opencode: nothing waiting" 2>/dev/null
+}
+
+main() {
+  local sub="${1:-}"
+  [ $# -gt 0 ] && shift
+  case "$sub" in
+    set) cmd_set "$@" ;;
+    clear) cmd_clear "$@" ;;
+    jump) cmd_jump ;;
+    jump-to) cmd_jump_to "$@" ;;
+    refresh) refresh ;;
+    *)
+      printf 'usage: oc-notify {set <pane> <state> <label> [detail]|clear <pane>|jump|jump-to <pane>|refresh}\n' >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

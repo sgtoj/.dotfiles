@@ -71,6 +71,7 @@ BREW_PACKAGES=(
   starship               # terminal prompt
   stow                   # tool to manage dotfiles
   sevenzip               # dependency: yazi
+  terminal-notifier      # dependency: oc-notify
   tmux                   # terminal multiplexer
   tofu-ls                # dev tool for tf lsp
   tree                   # tool to display dir
