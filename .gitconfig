@@ -17,6 +17,15 @@
 [credential "https://dev.azure.com"]
   useHttpPath = true
 
-[includeIf "gitdir:~/repo/mpz/"]
-  path = ~/repo/mpz/.gitconfig
+[includeIf "gitdir:~/repos/mpz/"]
+  path = ~/.config/git/mpz.gitconfig
+
+[includeIf "gitdir:~/repos/cs/"]
+  path = ~/.config/git/cs.gitconfig
+
+[includeIf "gitdir:~/repos/pp/"]
+  path = ~/.config/git/pp.gitconfig
+
+[includeIf "gitdir:~/repos/sgtoj/"]
+  path = ~/.config/git/sgtoj.gitconfig
 

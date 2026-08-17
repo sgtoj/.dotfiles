@@ -5,16 +5,21 @@
 # script to select a project directory interactively and then opens or switches
 # to a corresponding tmux session for project directory
 #
+# picker layout:
+# - existing tmux sessions first (prefixed with ●), excluding the current one
+# - project directories after, sorted by recency (git activity, then dir mtime)
+#
 # credit:
 # - script is based on a script written by primeagen
 # - https://github.com/ThePrimeagen/.dotfiles/blob/master/bin/.local/scripts/tmux-sessionizer
 
 # ------------------------------------------------------------ configuration ---
 
+SESSION_PREFIX="● "
+
 function list_search_directories() {
-  find ~/repos/mpz -mindepth 1 -maxdepth 1 -type d | sort
-  find ~/repos/cs ~/repos/sgtoj ~/repos/pp -mindepth 1 -maxdepth 1 -type d | sort
-  find ~/repos/scrap ~/repos/gh -mindepth 1 -maxdepth 1 -type d | sort
+  find ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp ~/repos/scrap ~/repos/gh \
+    -mindepth 1 -maxdepth 1 -type d 2>/dev/null
   echo "$HOME/.dotfiles"
 }
 
@@ -38,14 +43,89 @@ function exec_fzf() {
   fzf_path=$(get_fzf_path)
 
   $fzf_path \
-    --tmux \
+    --tmux center,90%,80% \
     --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \
     --color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc \
     --color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8 \
     --color=selected-bg:#45475a \
     --border="rounded" \
-    --multi \
-    "${@}"
+    --preview-window="right,55%,border-left" \
+    --preview="$0 --preview {}"
+}
+
+# list existing sessions (excluding the attached one), most recently used first
+function list_sessions() {
+  local current=""
+  if [[ -n $TMUX ]]; then
+    current=$(tmux display-message -p '#S' 2>/dev/null)
+  fi
+  tmux list-sessions -F '#{session_last_attached} #{session_name}' 2>/dev/null |
+    sort -rn |
+    awk -v cur="$current" -v pfx="$SESSION_PREFIX" \
+      '$2 != cur { print pfx $2 }'
+}
+
+# list project dirs sorted by recency: newest git activity (FETCH_HEAD/HEAD
+# mtime) or dir mtime as fallback
+function list_directories_by_recency() {
+  local dir ts
+  while IFS= read -r dir; do
+    ts=""
+    for f in "$dir/.git/FETCH_HEAD" "$dir/.git/HEAD"; do
+      if [[ -f $f ]]; then
+        ts=$(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null)
+        break
+      fi
+    done
+    if [[ -z $ts ]]; then
+      ts=$(stat -f '%m' "$dir" 2>/dev/null || stat -c '%Y' "$dir" 2>/dev/null)
+    fi
+    printf '%s %s\n' "${ts:-0}" "$dir"
+  done < <(list_search_directories) | sort -rn | cut -d' ' -f2-
+}
+
+# render the fzf preview for a picker entry (session or directory)
+function render_preview() {
+  local entry="$1"
+
+  if [[ "$entry" == "$SESSION_PREFIX"* ]]; then
+    local session="${entry#"$SESSION_PREFIX"}"
+    echo "tmux session: $session"
+    echo
+    tmux list-windows -t "$session" \
+      -F '#I: #W#{?window_active, (active),}' 2>/dev/null
+    return
+  fi
+
+  if [[ ! -d $entry ]]; then
+    return
+  fi
+
+  if [[ -d "$entry/.git" ]]; then
+    local branch dirty
+    branch=$(git -C "$entry" branch --show-current 2>/dev/null)
+    dirty=$(git -C "$entry" status --porcelain 2>/dev/null | head -1)
+    echo "branch: ${branch:-detached}${dirty:+ (dirty)}"
+    echo
+    git -C "$entry" log --oneline --no-decorate -5 2>/dev/null
+    echo
+  fi
+
+  local readme
+  for readme in "$entry/README.md" "$entry/readme.md" "$entry/README"; do
+    if [[ -f $readme ]]; then
+      if command -v bat &>/dev/null; then
+        bat --style=plain --color=always --line-range :40 "$readme" 2>/dev/null
+      else
+        head -40 "$readme"
+      fi
+      return
+    fi
+  done
+
+  if ! [[ -d "$entry/.git" ]]; then
+    ls -1 "$entry" | head -40
+  fi
 }
 
 create_session() {
@@ -57,13 +137,35 @@ create_session() {
 
 # ------------------------------------------------------------------- script ---
 
+# internal: fzf preview callback
+if [[ "$1" == "--preview" ]]; then
+  render_preview "$2"
+  exit 0
+fi
+
 if [[ $# -eq 1 ]]; then
   selected=$1
 else
-  selected=$(list_search_directories | exec_fzf --tmux center)
+  selected=$(
+    {
+      list_sessions
+      list_directories_by_recency
+    } | exec_fzf
+  )
 fi
 
 if [[ -z $selected ]]; then
+  exit 0
+fi
+
+# existing session selected: switch/attach directly
+if [[ "$selected" == "$SESSION_PREFIX"* ]]; then
+  session="${selected#"$SESSION_PREFIX"}"
+  if [[ -z $TMUX ]]; then
+    tmux attach-session -t "$session"
+  else
+    tmux switch-client -t "$session"
+  fi
   exit 0
 fi
 
@@ -92,4 +194,4 @@ if ! tmux has-session -t="$selected_name" 2>/dev/null; then
   create_session "$selected_name" "$selected"
 fi
 
-tmux switch-client -t $selected_name
+tmux switch-client -t "$selected_name"

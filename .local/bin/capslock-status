@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# -------------------------------------------------------------- description ---
+
+# prints a tmux status-bar badge when caps lock is on, nothing when off.
+# used via #() in status-right, so tmux re-runs it every status-interval.
+#
+# macos: caps lock state is read via a tiny IOKit helper that is compiled on
+# first run (requires xcode clt clang) and cached in ~/.cache/bin.
+# linux: falls back to /sys/class/leds or xset.
+
+# ------------------------------------------------------------------- config ---
+
+BADGE="#[fg=#f9e2af,bold]󰪛 CAPS #[default]"
+
+# ---------------------------------------------------------------------- fns ---
+
+capslock_on_macos() {
+  local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/bin"
+  local helper="${cache_dir}/capslock-state"
+
+  if [[ ! -x "$helper" ]]; then
+    command -v clang >/dev/null 2>&1 || return 1
+    mkdir -p "$cache_dir"
+    local src
+    src=$(mktemp /tmp/capslock-state.XXXXXX.c)
+    cat >"$src" <<'EOF'
+#include <IOKit/IOKitLib.h>
+#include <IOKit/hidsystem/IOHIDLib.h>
+#include <IOKit/hidsystem/IOHIDParameter.h>
+#include <stdbool.h>
+#include <stdio.h>
+
+int main(void) {
+  io_service_t service = IOServiceGetMatchingService(
+      kIOMasterPortDefault, IOServiceMatching(kIOHIDSystemClass));
+  if (!service) return 1;
+  io_connect_t connect = 0;
+  if (IOServiceOpen(service, mach_task_self(), kIOHIDParamConnectType,
+                    &connect) != KERN_SUCCESS)
+    return 1;
+  bool state = false;
+  kern_return_t kr =
+      IOHIDGetModifierLockState(connect, kIOHIDCapsLockState, &state);
+  IOServiceClose(connect);
+  IOObjectRelease(service);
+  if (kr != KERN_SUCCESS) return 1;
+  printf(state ? "1\n" : "0\n");
+  return 0;
+}
+EOF
+    clang -Wno-deprecated-declarations -framework IOKit -o "$helper" "$src" \
+      2>/dev/null || { rm -f "$src"; return 1; }
+    rm -f "$src"
+  fi
+
+  [[ "$("$helper" 2>/dev/null)" == "1" ]]
+}
+
+capslock_on_linux() {
+  local led
+  for led in /sys/class/leds/*capslock*/brightness; do
+    if [[ -r "$led" ]]; then
+      [[ "$(cat "$led")" != "0" ]]
+      return
+    fi
+  done
+  if command -v xset >/dev/null 2>&1; then
+    xset q 2>/dev/null | grep -q "Caps Lock:[[:space:]]*on"
+    return
+  fi
+  return 1
+}
+
+# ------------------------------------------------------------------- script ---
+
+case "$(uname -s)" in
+  Darwin) on=capslock_on_macos ;;
+  Linux)  on=capslock_on_linux ;;
+  *)      exit 0 ;;
+esac
+
+if "$on"; then
+  printf '%s' "$BADGE"
+fi

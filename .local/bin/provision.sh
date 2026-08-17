@@ -52,31 +52,26 @@ BREW_PACKAGES=(
   eza                    # alternative to ls
   deno                   # dev tool
   fd                     # alternative to find
-  ffmpeg                 # dependency: yazi
   fzf                    # tool to fuzzy find
   git                    # latest git
   gh                     # dev tool: github cli
   go                     # dev tool
   httpie                 # alternative to curl
-  imagemagick            # dependency: yazi
   jq                     # dev tool
   lazygit                # terminal ui for git
   libgit2                # dependency: terraform
   neovim                 # alternative to vim
   fnm                    # dev tool: fast-node-manager
-  poppler                # dependency: yazi
   prettier               # dev tool for formatting
   ripgrep                # alternative to grep
   shellcheck             # dev tool: shell linting
   starship               # terminal prompt
   stow                   # tool to manage dotfiles
-  sevenzip               # dependency: yazi
   tmux                   # terminal multiplexer
   tofu-ls                # dev tool for tf lsp
   tree                   # tool to display dir
   tree-sitter            # dev tool: code parsing (C library)
   tree-sitter-cli        # dev tool: code parsing (CLI, required by nvim-treesitter main)
-  yazi                   # terminal file manager
   yq                     # dev tool
   zoxide                 # tool to navigate fs
   anomalyco/tap/opencode # dev tool: ai tool

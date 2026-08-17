@@ -1,0 +1,6 @@
+# git identity overrides for repos under ~/repos/mpz/
+# included via includeIf in ~/.gitconfig
+[user]
+  name = Brian Ojeda
+  email = 9335829+sgtoj@users.noreply.github.com
+  signingkey = 479D7F278CA8ED0051094BCC2AE28BC21E81C2A2

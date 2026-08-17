@@ -16,7 +16,4 @@
 .local/bin/posting
 .local/share
 .local/state
-
-
-# tmp
-.config/opencode/skill/atmos-rollout
+.config/zsh/local.zsh

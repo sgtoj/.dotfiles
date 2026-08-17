@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# -------------------------------------------------------------- description ---
+
+# removes secret-leaking entries from the zsh history file:
+#   - any command containing `aws secretsmanager ...`
+#   - any invocation of ss, ss.sh, sealed.sh, or seal_secret.sh
+#     (inline sealed secrets)
+#
+# handles the zsh extended history format (`: <ts>:<dur>;cmd`) and multiline
+# entries (backslash-continued lines), removing the entire entry when any part
+# of it matches. the history file is modified in place (no backup).
+#
+# usage:
+#   clean-zsh-history            # clean ~/.zsh_history
+#   clean-zsh-history --dry-run  # report how many entries would be removed
+#   clean-zsh-history -f FILE    # operate on a different history file
+#
+# note: run `fc -R` (or restart) in any open zsh session afterwards; otherwise
+# a session with sharehistory can re-append matching entries from its memory.
+
+# ------------------------------------------------------------------- config ---
+
+histfile="${HOME}/.zsh_history"
+dry_run=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) dry_run=1; shift ;;
+    -f|--file) histfile="$2"; shift 2 ;;
+    -h|--help) grep '^#' "$0" | sed -n '5,20p'; exit 0 ;;
+    *) echo "ERROR: unknown argument: $1" >&2; exit 1 ;;
+  esac
+done
+
+if [[ ! -f "$histfile" ]]; then
+  echo "ERROR: history file not found: $histfile" >&2
+  exit 1
+fi
+
+# ------------------------------------------------------------------- script ---
+
+tmpfile=$(mktemp "${histfile}.XXXXXX")
+trap 'rm -f "$tmpfile"' EXIT
+
+# entries are grouped before matching so multiline commands are removed whole.
+# an entry starts at a line matching `: <ts>:<dur>;` (extended format) or, for
+# plain-format files, any line not continued from the previous one. a line
+# ending in a backslash continues the entry onto the next line.
+# LC_ALL=C: zsh "metafies" non-ascii bytes in the history file (0x83 escape),
+# which is not valid utf-8 and breaks awk's multibyte handling; treat as bytes
+removed=$(LC_ALL=C awk '
+  function flush() {
+    if (entry == "") return
+    # ss/ss.sh/sealed.sh must be the first token of a command segment (start
+    # of entry after the `;` of the extended-format header, or after a shell
+    # separator) so arguments like `grep ss` are not false positives; they
+    # are also matched as the target of source/./bash/sh/zsh since these are
+    # repo-local scripts that get sourced
+    if (entry ~ /aws[[:space:]]+secretsmanager/ ||
+        entry ~ /(^|[\n;|&(`])[[:space:]]*(([^[:space:]]*\/)?(ss|ss\.sh|sealed\.sh|seal_secret\.sh))([[:space:]]|$|[;&|)])/ ||
+        entry ~ /(^|[\n;|&(`])[[:space:]]*(source|\.|bash|sh|zsh)[[:space:]]+([^[:space:]]*\/)?(ss|ss\.sh|sealed\.sh|seal_secret\.sh)([[:space:]]|$|[;&|)])/) {
+      removed++
+    } else {
+      printf "%s", entry > out
+    }
+    entry = ""
+  }
+  BEGIN { out = ARGV[2]; ARGC = 2; removed = 0 }
+  {
+    line = $0 "\n"
+    if (cont) {                      # continuation of a multiline entry
+      entry = entry line
+    } else {
+      flush()
+      entry = line
+    }
+    cont = ($0 ~ /\\$/) ? 1 : 0      # backslash-terminated -> continues
+  }
+  END { flush(); print removed }
+' "$histfile" "$tmpfile")
+
+if [[ "$dry_run" -eq 1 ]]; then
+  rm -f "$tmpfile"
+  trap - EXIT
+  echo "dry run: would remove ${removed} entries from ${histfile}"
+  exit 0
+fi
+
+if [[ "$removed" -eq 0 ]]; then
+  rm -f "$tmpfile"
+  trap - EXIT
+  echo "no matching entries found in ${histfile}"
+  exit 0
+fi
+
+# preserve permissions and replace atomically
+chmod "$(stat -f '%Lp' "$histfile" 2>/dev/null || stat -c '%a' "$histfile")" "$tmpfile"
+mv "$tmpfile" "$histfile"
+trap - EXIT
+
+echo "removed ${removed} entries from ${histfile}"
+echo "run 'fc -R' in open zsh sessions (or restart them) to reload history"
