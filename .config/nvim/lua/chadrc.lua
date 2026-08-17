@@ -7,6 +7,9 @@ local M = {}
 
 M.base46 = {
   theme = "catppuccin",
+  hl_add = {
+    TelescopePathFilter = { fg = "yellow", bold = true },
+  },
 
   -- hl_override = {
   -- 	Comment = { italic = true },

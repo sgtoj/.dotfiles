@@ -52,14 +52,6 @@ rank_for() {
   esac
 }
 
-icon_for() {
-  case "${1:-}" in
-    waiting) printf '◆' ;;
-    error) printf '▲' ;;
-    *) printf '●' ;;
-  esac
-}
-
 colour_for() {
   case "${1:-}" in
     waiting) printf '#{@thm_red}' ;;
@@ -108,21 +100,20 @@ watching() {
   return 1
 }
 
-# Solid severity-coloured badges, deliberately compact: status-right is shared with the
-# window list, so this stays a handful of columns wide. The per-window marker says which
-# window, and prefix+a jumps to the most urgent.
+# Render as one connected Catppuccin status module, matching the session and
+# calendar widgets. The robot icon identifies the source; textual,
+# severity-coloured counts make the current state readable at a glance.
 build_alert() {
   local nwait="$1" nerr="$2" ndone="$3" out=""
-  local block='#[fg=#{@thm_crust},bg=%s,bold] %s%s #[default]'
+  local text_bg='#{@thm_surface_0}'
 
-  # shellcheck disable=SC2059
-  [ "$nwait" -gt 0 ] && out="$out$(printf "$block" "$(colour_for waiting)" "$(icon_for waiting)" "$nwait")"
-  # shellcheck disable=SC2059
-  [ "$nerr" -gt 0 ] && out="$out$(printf "$block" "$(colour_for error)" "$(icon_for error)" "$nerr")"
-  # shellcheck disable=SC2059
-  [ "$ndone" -gt 0 ] && out="$out$(printf "$block" "$(colour_for 'done')" "$(icon_for 'done')" "$ndone")"
+  [ "$nwait" -gt 0 ] && out="$out#[fg=$(colour_for waiting),bg=$text_bg] waiting $nwait"
+  [ "$nerr" -gt 0 ] && out="$out#[fg=$(colour_for error),bg=$text_bg] error $nerr"
+  [ "$ndone" -gt 0 ] && out="$out#[fg=$(colour_for 'done'),bg=$text_bg] done $ndone"
 
-  [ -n "$out" ] && out="$out "
+  if [ -n "$out" ]; then
+    out="#[fg=#{@thm_mauve}]#[bg=default]#[fg=#{@thm_crust},bg=#{@thm_mauve}]󰚩 #[fg=#{@thm_fg},bg=$text_bg]$out#[fg=$text_bg] "
+  fi
   printf '%s' "$out"
 }
 

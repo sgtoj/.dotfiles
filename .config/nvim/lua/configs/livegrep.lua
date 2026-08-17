@@ -68,6 +68,28 @@ M.live_grep = function()
       end
       return 1 / (score + OFFSET)
     end,
+
+    -- Highlight both query parts: regular TelescopeMatching for the grep
+    -- query, then a distinct highlight for the path filter within filename.
+    highlighter = function(_, prompt, display)
+      local grep_part, path_part = split_prompt(prompt)
+      local highlights = {}
+
+      for _, position in ipairs(fzy.positions(grep_part, display)) do
+        table.insert(highlights, { start = position, highlight = "TelescopeMatching" })
+      end
+
+      if path_part and path_part ~= "" then
+        -- vimgrep entries are rendered as `path:line:column:text`; limit the
+        -- second search to the path so content matches are not recolored.
+        local path_end = display:find(":%d+:%d+") or display:find(":%d+") or #display + 1
+        for _, position in ipairs(fzy.positions(path_part, display:sub(1, path_end - 1))) do
+          table.insert(highlights, { start = position, highlight = "TelescopePathFilter" })
+        end
+      end
+
+      return highlights
+    end,
   }
 
   pickers
