@@ -40,6 +40,17 @@ return {
     end,
   },
   {
+    "MeanderingProgrammer/render-markdown.nvim",
+    ft = "markdown",
+    opts = {
+      latex = { enabled = false },
+      code = {
+        width = "block",
+        right_pad = 2,
+      },
+    },
+  },
+  {
     "sphamba/smear-cursor.nvim",
     lazy = false,
     opts = {

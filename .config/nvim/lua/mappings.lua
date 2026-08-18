@@ -4,6 +4,8 @@ local map = vim.keymap.set
 map("n", ";", ":", { desc = "CMD enter command mode" })
 map("i", "jk", "<ESC>")
 
+map("n", "<leader>mr", "<cmd>RenderMarkdown buf_toggle<CR>", { desc = "toggle markdown rendering" })
+
 -- live grep with double-space path filter: `<grep query>  <path filter>`
 map("n", "<leader>fw", function()
   require("configs.livegrep").live_grep()
