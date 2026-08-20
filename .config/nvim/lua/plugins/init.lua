@@ -48,6 +48,10 @@ return {
         width = "block",
         right_pad = 2,
       },
+      win_options = {
+        -- no line wrapping while rendered; restored when toggled off
+        wrap = { default = true, rendered = false },
+      },
     },
   },
   {
