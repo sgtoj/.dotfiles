@@ -106,6 +106,21 @@ function inject_links() {
   done < <(git -C "$root" config --get-all wt.link || true)
 }
 
+# base for brand-new branches: the remote default branch when known,
+# falling back to HEAD of the checkout wt was invoked from
+function resolve_default_base() {
+  local root="$1" ref
+  ref=$(git -C "$root" symbolic-ref --quiet --short refs/remotes/origin/HEAD) &&
+    { echo "$ref"; return 0; }
+  for ref in origin/main origin/master; do
+    if git -C "$root" show-ref --verify --quiet "refs/remotes/$ref"; then
+      echo "$ref"
+      return 0
+    fi
+  done
+  echo "HEAD"
+}
+
 function cmd_new() {
   local branch="${1:-}" base="${2:-}"
   [[ -n $branch ]] || die "usage: wt new <branch> [base]"
@@ -115,6 +130,13 @@ function cmd_new() {
   wt_dir="$root/.worktrees/$(mangle "$branch")"
   [[ -e $wt_dir ]] && die "worktree already exists: $wt_dir"
 
+  # refresh remote refs so fresh remote branches are found and new branches
+  # start from an up-to-date default branch
+  if git -C "$root" remote get-url origin &>/dev/null; then
+    git -C "$root" fetch --quiet origin ||
+      echo "WARN: fetch failed (offline?); resolving against local refs" >&2
+  fi
+
   if git -C "$root" show-ref --verify --quiet "refs/heads/$branch"; then
     [[ -z $base ]] || die "branch '$branch' already exists; omit [base]"
     git -C "$root" worktree add "$wt_dir" "$branch"
@@ -122,7 +144,11 @@ function cmd_new() {
     [[ -z $base ]] || die "branch '$branch' exists on origin; omit [base]"
     git -C "$root" worktree add --track -b "$branch" "$wt_dir" "origin/$branch"
   else
-    git -C "$root" worktree add -b "$branch" "$wt_dir" "${base:-HEAD}"
+    if [[ -z $base ]]; then
+      base=$(resolve_default_base "$root")
+      echo "new branch '$branch' based on: $base"
+    fi
+    git -C "$root" worktree add -b "$branch" "$wt_dir" "$base"
   fi
 
   inject_links "$root" "$wt_dir"
