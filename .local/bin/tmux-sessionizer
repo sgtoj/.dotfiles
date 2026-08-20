@@ -19,7 +19,12 @@ SESSION_PREFIX="● "
 
 function list_search_directories() {
   find ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp ~/repos/scrap ~/repos/gh \
-    -mindepth 1 -maxdepth 1 -type d 2>/dev/null
+    -mindepth 1 -maxdepth 1 -type d ! -name .worktrees 2>/dev/null
+  # git worktrees created by `wt` live inside repos at .worktrees/<branch>;
+  # the extra ! -path excludes children of org-level .worktrees dirs
+  find ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp ~/repos/scrap ~/repos/gh \
+    -mindepth 3 -maxdepth 3 -type d \
+    -path '*/.worktrees/*' ! -path '*/.worktrees/*/*' 2>/dev/null
   echo "$HOME/.dotfiles"
 }
 
@@ -53,6 +58,20 @@ function exec_fzf() {
     --preview="$0 --preview {}"
 }
 
+# kill sessions whose working directory no longer exists (e.g. a worktree
+# removed outside of `wt rm`, such as via lazygit)
+function reap_dead_sessions() {
+  local current="" name path
+  if [[ -n $TMUX ]]; then
+    current=$(tmux display-message -p '#S' 2>/dev/null)
+  fi
+  while IFS=$'\t' read -r name path; do
+    if [[ $name != "$current" && -n $path && ! -d $path ]]; then
+      tmux kill-session -t "$name" 2>/dev/null
+    fi
+  done < <(tmux list-sessions -F $'#{session_name}\t#{session_path}' 2>/dev/null)
+}
+
 # list existing sessions (excluding the attached one), most recently used first
 function list_sessions() {
   local current=""
@@ -68,10 +87,17 @@ function list_sessions() {
 # list project dirs sorted by recency: newest git activity (FETCH_HEAD/HEAD
 # mtime) or dir mtime as fallback
 function list_directories_by_recency() {
-  local dir ts
+  local dir ts candidates
   while IFS= read -r dir; do
     ts=""
-    for f in "$dir/.git/FETCH_HEAD" "$dir/.git/HEAD"; do
+    if [[ $dir == */.worktrees/* ]]; then
+      # worktrees have a .git file; activity lives in the parent repo's
+      # .git/worktrees/<name>/ metadata
+      candidates=("${dir%/.worktrees/*}/.git/worktrees/$(basename "$dir")/HEAD")
+    else
+      candidates=("$dir/.git/FETCH_HEAD" "$dir/.git/HEAD")
+    fi
+    for f in "${candidates[@]}"; do
       if [[ -f $f ]]; then
         ts=$(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null)
         break
@@ -101,7 +127,7 @@ function render_preview() {
     return
   fi
 
-  if [[ -d "$entry/.git" ]]; then
+  if [[ -e "$entry/.git" ]]; then
     local branch dirty
     branch=$(git -C "$entry" branch --show-current 2>/dev/null)
     dirty=$(git -C "$entry" status --porcelain 2>/dev/null | head -1)
@@ -123,7 +149,7 @@ function render_preview() {
     fi
   done
 
-  if ! [[ -d "$entry/.git" ]]; then
+  if ! [[ -e "$entry/.git" ]]; then
     ls -1 "$entry" | head -40
   fi
 }
@@ -146,6 +172,7 @@ fi
 if [[ $# -eq 1 ]]; then
   selected=$1
 else
+  reap_dead_sessions
   selected=$(
     {
       list_sessions
@@ -173,6 +200,14 @@ fi
 parent_name=$(basename "$(dirname "$selected")")
 base_name=$(basename "$selected" | tr . _)
 selected_name="${parent_name}-${base_name}"
+
+# worktree paths (<org>/<repo>/.worktrees/<branch>) name as org-repo-branch
+if [[ "$selected" == */.worktrees/* ]]; then
+  main_repo="${selected%/.worktrees/*}"
+  org_name=$(basename "$(dirname "$main_repo")")
+  repo_name=$(basename "$main_repo" | tr . _)
+  selected_name="${org_name}-${repo_name}-${base_name}"
+fi
 
 # overides for generated session names
 if [[ "$base_name" == "_dotfiles" ]]; then

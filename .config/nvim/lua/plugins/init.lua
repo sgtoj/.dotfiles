@@ -17,7 +17,7 @@ return {
       conf.pickers = conf.pickers or {}
       conf.pickers.find_files = conf.pickers.find_files or {}
       conf.pickers.find_files.hidden = true
-      conf.pickers.find_files.file_ignore_patterns = { ".git/", "node_modules/" }
+      conf.pickers.find_files.file_ignore_patterns = { ".git/", "node_modules/", "%.worktrees/" }
       return conf
     end,
   },

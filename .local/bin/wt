@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+
+# -------------------------------------------------------------- description ---
+
+# git worktree workflow helper
+#
+# worktrees live inside the repository at `.worktrees/<branch>` (branch names
+# mangled: `.` and `/` become `_`). each worktree gets its own tmux session
+# named `<org>-<repo>-<branch>`, created via tmux-sessionizer.
+#
+# commands:
+#   wt new <branch> [base]   create worktree (+links +tmux session)
+#   wt ls                    list worktrees for the current repo
+#   wt rm [name] [-f] [-b]   remove worktree (self if omitted) [+branch]
+#   wt link                  (re)inject symlinks into the current worktree
+#   wt gc                    kill orphaned tmux sessions + prune worktrees
+
+set -euo pipefail
+
+# ------------------------------------------------------------ configuration ---
+
+# items symlinked from the main checkout into new worktrees when present;
+# extend per-repo with: git config --add wt.link <path>
+DEFAULT_LINKS=(node_modules .venv .env .envrc)
+
+# ---------------------------------------------------------------------- fns ---
+
+function die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+function mangle() {
+  tr './' '__' <<<"$1"
+}
+
+# root of the main checkout, even when called from inside a worktree
+function main_root() {
+  local common
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
+    die "not inside a git repository"
+  [[ $(basename "$common") == ".git" ]] ||
+    die "unsupported repository layout: $common"
+  dirname "$common"
+}
+
+# session name must match tmux-sessionizer naming: <org>-<repo>-<branch>
+function session_name() {
+  local root="$1" wt_name="$2" org repo
+  org=$(basename "$(dirname "$root")")
+  repo=$(basename "$root" | tr . _)
+  echo "${org}-${repo}-$(mangle "$wt_name")"
+}
+
+function link_one() {
+  local root="$1" wt_dir="$2" item="$3"
+  local src="$root/$item" dst="$wt_dir/$item"
+
+  [[ -e $src ]] || return 0
+  [[ -e $dst || -L $dst ]] && return 0
+
+  # relative target: up and out of .worktrees/<name>/, plus item's own depth
+  local up="../../" seg
+  IFS='/' read -ra seg <<<"$item"
+  for ((i = 1; i < ${#seg[@]}; i++)); do
+    up+="../"
+  done
+
+  mkdir -p "$(dirname "$dst")"
+  ln -s "${up}${item}" "$dst"
+  echo "linked: $item"
+}
+
+# remove previously injected symlinks so they don't count as untracked
+# files when git validates `worktree remove`
+function remove_links() {
+  local root="$1" wt_dir="$2" item
+
+  for item in "${DEFAULT_LINKS[@]}"; do
+    [[ -L "$wt_dir/$item" ]] && rm "$wt_dir/$item"
+  done
+  for item in "$wt_dir"/.env.*; do
+    [[ -L $item ]] && rm "$item"
+  done
+  while IFS= read -r item; do
+    [[ -n $item && -L "$wt_dir/$item" ]] && rm "$wt_dir/$item"
+  done < <(git -C "$root" config --get-all wt.link || true)
+  return 0
+}
+
+function inject_links() {
+  local root="$1" wt_dir="$2" item
+
+  for item in "${DEFAULT_LINKS[@]}"; do
+    link_one "$root" "$wt_dir" "$item"
+  done
+
+  # .env.* variants (e.g. .env.local)
+  for item in "$root"/.env.*; do
+    [[ -f $item ]] && link_one "$root" "$wt_dir" "$(basename "$item")"
+  done
+
+  # per-repo extras
+  while IFS= read -r item; do
+    [[ -n $item ]] && link_one "$root" "$wt_dir" "$item"
+  done < <(git -C "$root" config --get-all wt.link || true)
+}
+
+function cmd_new() {
+  local branch="${1:-}" base="${2:-}"
+  [[ -n $branch ]] || die "usage: wt new <branch> [base]"
+
+  local root wt_dir
+  root=$(main_root)
+  wt_dir="$root/.worktrees/$(mangle "$branch")"
+  [[ -e $wt_dir ]] && die "worktree already exists: $wt_dir"
+
+  if git -C "$root" show-ref --verify --quiet "refs/heads/$branch"; then
+    [[ -z $base ]] || die "branch '$branch' already exists; omit [base]"
+    git -C "$root" worktree add "$wt_dir" "$branch"
+  elif git -C "$root" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    [[ -z $base ]] || die "branch '$branch' exists on origin; omit [base]"
+    git -C "$root" worktree add --track -b "$branch" "$wt_dir" "origin/$branch"
+  else
+    git -C "$root" worktree add -b "$branch" "$wt_dir" "${base:-HEAD}"
+  fi
+
+  inject_links "$root" "$wt_dir"
+
+  exec tmux-sessionizer "$wt_dir"
+}
+
+function cmd_ls() {
+  local root wt branch dirty
+  root=$(main_root)
+
+  git -C "$root" worktree list --porcelain | awk '/^worktree /{print $2}' |
+    while IFS= read -r wt; do
+      branch=$(git -C "$wt" branch --show-current 2>/dev/null)
+      dirty=""
+      [[ -n $(git -C "$wt" status --porcelain 2>/dev/null | head -1) ]] && dirty=" *"
+      if [[ $wt == "$root" ]]; then
+        printf '%s (main) [%s]%s\n' "$wt" "${branch:-detached}" "$dirty"
+      else
+        printf '%s [%s]%s\n' "$wt" "${branch:-detached}" "$dirty"
+      fi
+    done
+}
+
+function cmd_rm() {
+  local name="" force=0 del_branch=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+    -f) force=1 ;;
+    -b) del_branch=1 ;;
+    -*) die "unknown flag: $arg" ;;
+    *) name="$arg" ;;
+    esac
+  done
+
+  local root wt_dir
+  root=$(main_root)
+
+  if [[ -n $name ]]; then
+    wt_dir="$root/.worktrees/$(mangle "$name")"
+  else
+    wt_dir=$(git rev-parse --show-toplevel)
+    [[ $wt_dir == "$root"/.worktrees/* ]] ||
+      die "not inside a worktree; usage: wt rm <name>"
+  fi
+  [[ -d $wt_dir ]] || die "no such worktree: $wt_dir"
+
+  local branch session
+  branch=$(git -C "$wt_dir" branch --show-current 2>/dev/null || true)
+  session=$(session_name "$root" "$(basename "$wt_dir")")
+
+  # if we are inside the doomed session, escape to the main repo session first
+  if [[ -n ${TMUX:-} ]]; then
+    local current
+    current=$(tmux display-message -p '#S')
+    if [[ $current == "$session" ]]; then
+      cd "$root"
+      tmux-sessionizer "$root" || true
+    fi
+  fi
+
+  remove_links "$root" "$wt_dir"
+
+  local rm_args=()
+  [[ $force -eq 1 ]] && rm_args+=(--force)
+  git -C "$root" worktree remove "${rm_args[@]}" "$wt_dir" ||
+    die "removal failed (dirty worktree? try: wt rm ${name:-$(basename "$wt_dir")} -f)"
+  git -C "$root" worktree prune
+
+  if [[ $del_branch -eq 1 && -n $branch ]]; then
+    git -C "$root" branch -D "$branch"
+  fi
+
+  echo "removed: $wt_dir"
+
+  # last: killing our own session ends this process when removing self
+  tmux kill-session -t "$session" 2>/dev/null || true
+}
+
+function cmd_link() {
+  local root wt_dir
+  root=$(main_root)
+  wt_dir=$(git rev-parse --show-toplevel)
+  [[ $wt_dir != "$root" ]] || die "already in the main checkout; nothing to link"
+  inject_links "$root" "$wt_dir"
+}
+
+function cmd_gc() {
+  # kill tmux sessions whose working directory no longer exists
+  local current="" name path
+  if [[ -n ${TMUX:-} ]]; then
+    current=$(tmux display-message -p '#S')
+  fi
+  while IFS=$'\t' read -r name path; do
+    if [[ $name != "$current" && ! -d $path ]]; then
+      tmux kill-session -t "$name" 2>/dev/null || true
+      echo "killed session: $name"
+    fi
+  done < <(tmux list-sessions -F $'#{session_name}\t#{session_path}' 2>/dev/null)
+
+  # prune stale worktree metadata if inside a repo
+  if git rev-parse --git-dir &>/dev/null; then
+    git worktree prune
+  fi
+}
+
+# ------------------------------------------------------------------- script ---
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+new) cmd_new "$@" ;;
+ls) cmd_ls "$@" ;;
+rm) cmd_rm "$@" ;;
+link) cmd_link "$@" ;;
+gc) cmd_gc "$@" ;;
+*)
+  cat >&2 <<'EOF'
+usage: wt <command>
+
+  new <branch> [base]   create .worktrees/<branch> (+links +tmux session)
+  ls                    list worktrees for the current repo
+  rm [name] [-f] [-b]   remove worktree (self if omitted); -f force, -b delete branch
+  link                  (re)inject symlinks into the current worktree
+  gc                    kill orphaned tmux sessions + prune worktrees
+EOF
+  exit 1
+  ;;
+esac
