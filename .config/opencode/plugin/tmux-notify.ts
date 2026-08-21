@@ -3,7 +3,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 /**
  * Surface opencode panes that need attention, across every tmux session.
  *
- * This file is only an event source. Every tmux/macOS decision lives in
+ * This file is only an event source. Every tmux decision lives in
  * ~/.dotfiles/.local/bin/oc-notify so the behaviour can be tested from a shell.
  *
  * The pane is identified by $TMUX_PANE, which the opencode server process inherits
@@ -113,7 +113,7 @@ export const TmuxNotify: Plugin = async ({ directory, $ }) => {
           await flag("error", describe(type, properties))
           break
 
-        // Turn finished: quiet (sound + status bar, no banner).
+        // Turn finished: tmux status bar only; native attention supplies sound.
         case "session.idle":
           if (!children.has(properties?.sessionID)) await flag("done", "")
           break
