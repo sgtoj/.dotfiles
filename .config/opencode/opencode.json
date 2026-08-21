@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "small_model": "opencode/claude-sonnet-5",
+  "mcp": {
+    "chrome-devtools": {
+      "type": "local",
+      "command": ["npx", "-y", "chrome-devtools-mcp@latest"],
+      "enabled": true
+    }
+  },
+  "formatter": {
+    "markdown": {
+      "command": ["mdformat", "$FILE"],
+      "extensions": [".md"]
+    },
+    "terraform": {
+      "command": ["tofu", "fmt", "$FILE"],
+      "extensions": [".tf"]
+    }
+  },
+  "lsp": {
+    "terraform": {
+      "command": ["tofu-ls", "serve"],
+      "extensions": [".terraform", ".tf"]
+    }
+  }
+}

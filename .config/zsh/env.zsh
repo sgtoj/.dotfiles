@@ -17,3 +17,7 @@ export FZF_DEFAULT_OPTS=" \
 
 export TELEPORT_TOOLS_VERSION=off
 export SHELLCHECK_OPTS='-S warning'
+
+# Keep internal MCP endpoints outside the shared dotfiles configuration.
+[[ -z ${OPENCODE_CONFIG:-} && -f "${HOME}/.secrets/opencode/opencode.private.json" ]] &&
+  export OPENCODE_CONFIG="${HOME}/.secrets/opencode/opencode.private.json"

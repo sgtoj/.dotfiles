@@ -14,3 +14,7 @@ wt new --no-tmux <branch-name>
 
 Use `--no-tmux` for agent work so the worktree can run in the background
 without creating a tmux session.
+
+Never attempt to access data in `.secrets` or `~/.secrets`, including reading,
+listing, searching, editing, copying, moving, or deleting it. Ask the user to
+perform any operation that requires secret data.

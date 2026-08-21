@@ -1,11 +1,11 @@
 .aws/cli
 .aws/sso
 .aws/config
+.secrets
 .config/gh
 .config/go/telemetry
 .config/op
 .config/sops
-.config/opencode/opencode.json
 .local/bin/atmos
 .local/bin/black
 .local/bin/blackd
