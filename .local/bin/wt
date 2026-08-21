@@ -9,7 +9,8 @@
 # named `<org>-<repo>-<branch>`, created via tmux-sessionizer.
 #
 # commands:
-#   wt new <branch> [base]   create worktree (+links +tmux session)
+#   wt new [--no-tmux] <branch> [base]
+#                           create worktree (+links +tmux session by default)
 #   wt ls                    list worktrees for the current repo
 #   wt rm [name] [-f] [-b]   remove worktree (self if omitted) [+branch]
 #   wt link                  (re)inject symlinks into the current worktree
@@ -122,8 +123,23 @@ function resolve_default_base() {
 }
 
 function cmd_new() {
-  local branch="${1:-}" base="${2:-}"
-  [[ -n $branch ]] || die "usage: wt new <branch> [base]"
+  local no_tmux=0 branch="" base="" arg
+  for arg in "$@"; do
+    case "$arg" in
+    -n | --no-tmux) no_tmux=1 ;;
+    -*) die "unknown flag: $arg" ;;
+    *)
+      if [[ -z $branch ]]; then
+        branch="$arg"
+      elif [[ -z $base ]]; then
+        base="$arg"
+      else
+        die "usage: wt new [--no-tmux] <branch> [base]"
+      fi
+      ;;
+    esac
+  done
+  [[ -n $branch ]] || die "usage: wt new [--no-tmux] <branch> [base]"
 
   local root wt_dir
   root=$(main_root)
@@ -152,6 +168,11 @@ function cmd_new() {
   fi
 
   inject_links "$root" "$wt_dir"
+
+  if [[ $no_tmux -eq 1 ]]; then
+    echo "created: $wt_dir"
+    return 0
+  fi
 
   exec tmux-sessionizer "$wt_dir"
 }
@@ -270,7 +291,9 @@ gc) cmd_gc "$@" ;;
   cat >&2 <<'EOF'
 usage: wt <command>
 
-  new <branch> [base]   create .worktrees/<branch> (+links +tmux session)
+  new [--no-tmux] <branch> [base]
+                        create .worktrees/<branch> (+links +tmux session by default)
+                        -n, --no-tmux: do not create a tmux session
   ls                    list worktrees for the current repo
   rm [name] [-f] [-b]   remove worktree (self if omitted); -f force, -b delete branch
   link                  (re)inject symlinks into the current worktree
