@@ -209,9 +209,11 @@ if [[ "$selected" == */.worktrees/* ]]; then
   selected_name="${org_name}-${repo_name}-${base_name}"
 fi
 
-# overides for generated session names
+# overrides for generated session names
 if [[ "$base_name" == "_dotfiles" ]]; then
   selected_name="dotfiles"
+elif [[ "$selected" == */.worktrees/* && $(basename "${selected%/.worktrees/*}") == ".dotfiles" ]]; then
+  selected_name="dotfiles-${base_name}"
 elif [[ "$base_name" == "_github" ]]; then
   selected_name="${parent_name}-github"
 fi

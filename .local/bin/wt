@@ -6,10 +6,12 @@
 #
 # worktrees live inside the repository at `.worktrees/<branch>` (branch names
 # mangled: `.` and `/` become `_`). each worktree gets its own tmux session
-# named `<org>-<repo>-<branch>`, created via tmux-sessionizer.
+# named `<org>-<repo>-<branch>`, created via tmux-sessionizer. The dotfiles
+# repository is the exception: `dotfiles-<branch>`.
 #
 # commands:
 #   wt new <branch> [base]   create worktree (+links +tmux session)
+#   wt open <branch>         open an existing worktree in tmux
 #   wt ls                    list worktrees for the current repo
 #   wt rm [name] [-f] [-b]   remove worktree (self if omitted) [+branch]
 #   wt link                  (re)inject symlinks into the current worktree
@@ -44,11 +46,16 @@ function main_root() {
   dirname "$common"
 }
 
-# session name must match tmux-sessionizer naming: <org>-<repo>-<branch>
+# session name must match tmux-sessionizer naming
 function session_name() {
   local root="$1" wt_name="$2" org repo
   org=$(basename "$(dirname "$root")")
-  repo=$(basename "$root" | tr . _)
+  repo=$(basename "$root")
+  if [[ $repo == ".dotfiles" ]]; then
+    echo "dotfiles-$(mangle "$wt_name")"
+    return
+  fi
+  repo=${repo//./_}
   echo "${org}-${repo}-$(mangle "$wt_name")"
 }
 
@@ -152,6 +159,20 @@ function cmd_new() {
   fi
 
   inject_links "$root" "$wt_dir"
+
+  exec tmux-sessionizer "$wt_dir"
+}
+
+function cmd_open() {
+  local name="${1:-}"
+  [[ -n $name && $# -eq 1 ]] || die "usage: wt open <branch>"
+
+  local root wt_dir
+  root=$(main_root)
+  wt_dir="$root/.worktrees/$(mangle "$name")"
+  [[ -d $wt_dir ]] || die "no such worktree: $wt_dir"
+  git -C "$wt_dir" rev-parse --is-inside-work-tree &>/dev/null ||
+    die "not a git worktree: $wt_dir"
 
   exec tmux-sessionizer "$wt_dir"
 }
@@ -262,6 +283,7 @@ shift || true
 
 case "$cmd" in
 new) cmd_new "$@" ;;
+open) cmd_open "$@" ;;
 ls) cmd_ls "$@" ;;
 rm) cmd_rm "$@" ;;
 link) cmd_link "$@" ;;
@@ -271,6 +293,7 @@ gc) cmd_gc "$@" ;;
 usage: wt <command>
 
   new <branch> [base]   create .worktrees/<branch> (+links +tmux session)
+  open <branch>         open an existing worktree in tmux
   ls                    list worktrees for the current repo
   rm [name] [-f] [-b]   remove worktree (self if omitted); -f force, -b delete branch
   link                  (re)inject symlinks into the current worktree
