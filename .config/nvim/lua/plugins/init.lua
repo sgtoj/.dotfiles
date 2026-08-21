@@ -66,6 +66,7 @@ return {
   },
   {
     "github/copilot.vim",
+    enabled = false,
     lazy = false,
     config = function()
       vim.g.copilot_node_command = vim.fn.expand "~/.local/share/fnm/aliases/default/bin/node"
