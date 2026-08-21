@@ -12,7 +12,7 @@
 # commands:
 #   wt new [--no-tmux] <branch> [base]
 #                           create worktree (+links +tmux session by default)
-#   wt open <branch>         open an existing worktree in tmux
+#   wt open [branch]         pick or open an existing worktree in tmux
 #   wt ls                    list worktrees for the current repo
 #   wt rm [name] [-f] [-b]   remove worktree (self if omitted) [+branch]
 #   wt link                  (re)inject symlinks into the current worktree
@@ -185,12 +185,27 @@ function cmd_new() {
 }
 
 function cmd_open() {
-  local name="${1:-}"
-  [[ -n $name && $# -eq 1 ]] || die "usage: wt open <branch>"
+  local name="${1:-}" root wt_dir selected wt branch
+  [[ $# -le 1 ]] || die "usage: wt open [branch]"
 
-  local root wt_dir
   root=$(main_root)
-  wt_dir="$root/.worktrees/$(mangle "$name")"
+
+  if [[ -n $name ]]; then
+    wt_dir="$root/.worktrees/$(mangle "$name")"
+  else
+    selected=$(
+      git -C "$root" worktree list --porcelain | awk '/^worktree /{print $2}' |
+        while IFS= read -r wt; do
+          [[ $wt == "$root" ]] && continue
+          branch=$(git -C "$wt" branch --show-current 2>/dev/null)
+          printf '%s\t%s\n' "${branch:-$(basename "$wt")}" "$wt"
+        done |
+        fzf --tmux center,90%,80% --delimiter=$'\t' --with-nth=1 --prompt='worktree> '
+    ) || return 0
+    [[ -n $selected ]] || return 0
+    wt_dir="${selected#*$'\t'}"
+  fi
+
   [[ -d $wt_dir ]] || die "no such worktree: $wt_dir"
   git -C "$wt_dir" rev-parse --is-inside-work-tree &>/dev/null ||
     die "not a git worktree: $wt_dir"
@@ -316,7 +331,7 @@ usage: wt <command>
   new [--no-tmux] <branch> [base]
                         create .worktrees/<branch> (+links +tmux session by default)
                         -n, --no-tmux: do not create a tmux session
-  open <branch>         open an existing worktree in tmux
+  open [branch]         pick or open an existing worktree in tmux
   ls                    list worktrees for the current repo
   rm [name] [-f] [-b]   remove worktree (self if omitted); -f force, -b delete branch
   link                  (re)inject symlinks into the current worktree
