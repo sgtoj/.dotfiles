@@ -2,7 +2,7 @@ palette = "catppuccin_mocha"
 
 format = """
 $hostname\
-$directory\
+${custom.worktree_directory}\
 $container\
 $git_branch\
 $git_state\
@@ -15,6 +15,21 @@ $character"""
 right_format = """"""
 [directory]
 style = "blue"
+
+[custom.worktree_directory]
+command = '''
+case "$PWD" in
+  */.worktrees/*)
+    repo=${PWD%%/.worktrees/*}
+    repo=${repo##*/}
+    printf '%s 󰙅' "${repo#.}"
+    ;;
+  *) starship module directory ;;
+esac
+'''
+format = "[$output]($style) "
+style = "blue"
+when = "true"
 
 [character]
 success_symbol = "[❯](mauve)"
