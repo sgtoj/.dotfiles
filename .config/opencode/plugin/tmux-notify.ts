@@ -3,7 +3,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 /**
  * Surface opencode panes that need attention, across every tmux session.
  *
- * This file is only an event source. Every tmux decision lives in
+ * This file is only an event source. Every tmux notification decision lives in
  * ~/.dotfiles/.local/bin/oc-notify so the behaviour can be tested from a shell.
  *
  * The pane is identified by $TMUX_PANE, which the opencode server process inherits
@@ -89,7 +89,8 @@ export const TmuxNotify: Plugin = async ({ directory, $ }) => {
    * and a stale cache would swallow a later alert.
    */
   const notify = (args: string[]) => $`${NOTIFY} ${args}`.quiet().nothrow()
-  const flag = (state: string, detail: string) => notify(["set", pane, state, label, detail])
+  const flag = (state: string, detail: string, sound = state) =>
+    notify(["set", pane, state, label, detail, sound])
   const clear = () => notify(["clear", pane])
 
   return {
@@ -105,15 +106,17 @@ export const TmuxNotify: Plugin = async ({ directory, $ }) => {
 
         // Blocked on a human: loud.
         case "permission.asked":
+          await flag("waiting", describe(type, properties), "permission")
+          break
         case "question.asked":
-          await flag("waiting", describe(type, properties))
+          await flag("waiting", describe(type, properties), "question")
           break
 
         case "session.error":
           await flag("error", describe(type, properties))
           break
 
-        // Turn finished: tmux status bar only; native attention supplies sound.
+        // Turn finished: alert with the matching OpenCode sound and update tmux status.
         case "session.idle":
           if (!children.has(properties?.sessionID)) await flag("done", "")
           break

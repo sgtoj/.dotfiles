@@ -3,8 +3,8 @@
 # oc-notify -- surface opencode panes that need attention, across every tmux session.
 #
 # Driven by ~/.config/opencode/plugin/tmux-notify.ts. Everything visual renders inside
-# tmux; OpenCode's native attention system owns audio, and desktop notifications stay off.
-# State lives in tmux user options so the status bar is event-driven and needs no polling:
+# tmux; OpenCode's matching audio assets are played by oc-sound. State lives in tmux user
+# options so the status bar is event-driven and needs no polling:
 #
 #   @oc_state  pane-scoped, the source of truth (waiting|done|error)
 #   @oc_win    window-scoped, highest severity in that window (drives the window marker)
@@ -18,7 +18,7 @@
 # panes inherit their window's flag and corrupt every count.
 #
 # Usage:
-#   oc-notify set <pane> <waiting|done|error> <label> [detail]
+#   oc-notify set <pane> <waiting|done|error> <label> [detail] [sound]
 #   oc-notify clear <pane>
 #   oc-notify jump                 # focus the most urgent flagged pane
 #   oc-notify jump-to <pane>       # focus one pane
@@ -32,6 +32,7 @@ export PATH
 OPT="@oc_state"
 WOPT="@oc_win"
 ALERT_OPT="@oc_alert"
+SOUND_CMD="${HOME}/.dotfiles/.local/bin/oc-sound"
 
 TMUX_BIN="$(command -v tmux 2>/dev/null || true)"
 [ -n "$TMUX_BIN" ] || TMUX_BIN="/opt/homebrew/bin/tmux"
@@ -57,6 +58,12 @@ colour_for() {
     error) printf '#{@thm_peach}' ;;
     *) printf '#{@thm_yellow}' ;;
   esac
+}
+
+play() {
+  local sound="$1"
+  [[ -x $SOUND_CMD ]] || return 0
+  "$SOUND_CMD" "$sound" >/dev/null 2>&1 &
 }
 
 # Detail text originates from tool/model output, so it must never be able to inject tmux
@@ -167,23 +174,31 @@ toast() {
 }
 
 announce() {
-  local pane="$1" state="$2" label="$3" detail="$4" loc
+  local pane="$1" state="$2" label="$3" detail="$4" sound="${5:-}" loc
   loc="$($TMUX_BIN display-message -p -t "$pane" '#{session_name}:#{window_index}' 2>/dev/null)" || loc="$pane"
 
+  play "$sound"
+
   # A finished turn stays quiet visually: the badge is reminder enough, and toasting every
-  # completion would interrupt constantly with several agents running. OpenCode's native
-  # attention sound supplies the audible completion signal.
+  # completion would interrupt constantly with several agents running.
   [ "$state" = "done" ] && return 0
   toast "$state" "$loc" "$label" "$detail"
 }
 
 cmd_set() {
-  local pane="${1:-}" state="${2:-}" label="${3:-opencode}" detail="${4:-}" cur
+  local pane="${1:-}" state="${2:-}" label="${3:-opencode}" detail="${4:-}" sound cur
   [ -n "$pane" ] || die "set: pane required"
   case "$state" in
     waiting | done | error) ;;
     *) die "set: state must be waiting|done|error" ;;
   esac
+  sound="${5:-}"
+  if [[ -z $sound ]]; then
+    case "$state" in
+    waiting) sound="permission" ;;
+    *) sound="$state" ;;
+    esac
+  fi
 
   # Pane vanished between the event and now. display-message exits 0 for an unknown
   # target and just prints nothing, so test the output rather than the status.
@@ -203,7 +218,7 @@ cmd_set() {
 
   $TMUX_BIN set-option -p -t "$pane" "$OPT" "$state" 2>/dev/null || exit 0
   refresh
-  announce "$pane" "$state" "$label" "$detail"
+  announce "$pane" "$state" "$label" "$detail" "$sound"
 }
 
 cmd_clear() {
@@ -260,7 +275,7 @@ main() {
     jump-to) cmd_jump_to "$@" ;;
     refresh) refresh ;;
     *)
-      printf 'usage: oc-notify {set <pane> <state> <label> [detail]|clear <pane>|jump|jump-to <pane>|refresh}\n' >&2
+      printf 'usage: oc-notify {set <pane> <state> <label> [detail] [sound]|clear <pane>|jump|jump-to <pane>|refresh}\n' >&2
       exit 2
       ;;
   esac

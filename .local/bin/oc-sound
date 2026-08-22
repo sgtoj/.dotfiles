@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+
+# Play the matching OpenCode v1.18.19 attention asset. The cache keeps the
+# notifier independent of macOS system sounds while avoiding a repository of
+# copied binary assets.
+
+set -euo pipefail
+
+VERSION="v1.18.19"
+BASE_URL="https://raw.githubusercontent.com/anomalyco/opencode/${VERSION}/packages/ui/src/assets/audio"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/opencode/sounds/${VERSION}"
+VOLUME=0.8
+
+die() {
+  printf 'oc-sound: %s\n' "$1" >&2
+  exit 2
+}
+
+asset_for() {
+  case "$1" in
+  question) printf 'bip-bop-03.mp3' ;;
+  permission) printf 'staplebops-06.mp3' ;;
+  error) printf 'nope-03.mp3' ;;
+  done) printf 'bip-bop-01.mp3' ;;
+  subagent_done) printf 'yup-01.mp3' ;;
+  *) die "unknown sound: $1" ;;
+  esac
+}
+
+fetch() {
+  local asset="$1" file tmp
+  file="$CACHE_DIR/$asset"
+  [[ -s $file ]] && {
+    printf '%s\n' "$file"
+    return
+  }
+
+  command -v curl >/dev/null || die "curl is required to fetch OpenCode sound assets"
+  mkdir -p "$CACHE_DIR"
+  tmp=$(mktemp "$CACHE_DIR/.${asset}.XXXXXX")
+  trap 'rm -f "$tmp"' RETURN
+  curl --fail --location --silent --show-error "$BASE_URL/$asset" --output "$tmp"
+  mv "$tmp" "$file"
+  trap - RETURN
+  printf '%s\n' "$file"
+}
+
+play() {
+  local file="$1" volume_pct=80
+
+  if command -v afplay >/dev/null; then
+    exec afplay -v "$VOLUME" "$file"
+  fi
+  if command -v ffplay >/dev/null; then
+    exec ffplay -nodisp -autoexit -loglevel error -volume "$volume_pct" "$file"
+  fi
+  if command -v mpv >/dev/null; then
+    exec mpv --no-video --really-quiet --volume="$volume_pct" "$file"
+  fi
+  if command -v paplay >/dev/null; then
+    exec paplay "$file"
+  fi
+  if command -v play >/dev/null; then
+    exec play -q "$file" vol "$VOLUME"
+  fi
+
+  die "no supported audio player found (afplay, ffplay, mpv, paplay, or play)"
+}
+
+sound="${1:-}"
+[[ -n $sound ]] || die "usage: oc-sound <question|permission|error|done|subagent_done|--prefetch>"
+
+if [[ $sound == "--prefetch" ]]; then
+  for sound in question permission error 'done' subagent_done; do
+    fetch "$(asset_for "$sound")" >/dev/null
+  done
+  exit 0
+fi
+
+play "$(fetch "$(asset_for "$sound")")"
