@@ -7,7 +7,7 @@
 #
 # picker layout:
 # - existing tmux sessions first (prefixed with ●), excluding the current one
-# - project directories after, sorted by recency (git activity, then dir mtime)
+# - cached project directories after; refreshed by recency in the background
 #
 # credit:
 # - script is based on a script written by primeagen
@@ -16,15 +16,14 @@
 # ------------------------------------------------------------ configuration ---
 
 SESSION_PREFIX="● "
+SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/tmux-sessionizer"
+DIRECTORY_CACHE="$CACHE_DIR/directories"
+REFRESH_DELAY=0.25
 
 function list_search_directories() {
   find ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp ~/repos/scrap ~/repos/gh \
     -mindepth 1 -maxdepth 1 -type d ! -name .worktrees 2>/dev/null
-  # git worktrees created by `wt` live inside repos at .worktrees/<branch>;
-  # the extra ! -path excludes children of org-level .worktrees dirs
-  find ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp ~/repos/scrap ~/repos/gh \
-    -mindepth 3 -maxdepth 3 -type d \
-    -path '*/.worktrees/*' ! -path '*/.worktrees/*/*' 2>/dev/null
   echo "$HOME/.dotfiles"
 }
 
@@ -44,18 +43,25 @@ function get_fzf_path() {
 }
 
 function exec_fzf() {
-  local fzf_path
+  local socket="$1" fzf_path
   fzf_path=$(get_fzf_path)
 
   $fzf_path \
     --tmux center,90%,80% \
+    --sync \
+    --no-sort \
+    --track \
+    --listen="$socket" \
+    --delimiter=$'\t' \
+    --nth=1 \
+    --with-nth=1 \
     --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \
     --color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc \
     --color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8 \
     --color=selected-bg:#45475a \
     --border="rounded" \
     --preview-window="right,55%,border-left" \
-    --preview="$0 --preview {}"
+    --preview="$SCRIPT_PATH --preview {}"
 }
 
 # kill sessions whose working directory no longer exists (e.g. a worktree
@@ -72,21 +78,77 @@ function reap_dead_sessions() {
   done < <(tmux list-sessions -F $'#{session_name}\t#{session_path}' 2>/dev/null)
 }
 
-# list existing sessions (excluding the attached one), most recently used first
+function session_label() {
+  local name="$1" path="$2" root parent org repo branch gitdir ref worktree=0
+  [[ -n $path ]] || {
+    printf '%s\n' "$name"
+    return
+  }
+
+  if [[ $path == */.worktrees/* ]]; then
+    root="${path%/.worktrees/*}"
+    worktree=1
+  else
+    root="$path"
+  fi
+
+  # Session paths are normally ~/repos/<org>/<repo>. Avoid a Git subprocess for
+  # every session so the fzf picker can render its session entries immediately.
+  if [[ $root != "$HOME"/repos/*/* && $root != "$HOME"/.dotfiles ]]; then
+    printf '%s\n' "$name"
+    return
+  fi
+
+  parent="${root%/*}"
+  org="${parent##*/}"
+  repo="${root##*/}"
+  repo="${repo#.}"
+
+  [[ $root == "$HOME"/.dotfiles ]] && org="sgtoj"
+
+  if [[ $worktree -eq 1 ]]; then
+    branch="${path##*/}"
+    if [[ -r "$path/.git" ]]; then
+      IFS= read -r gitdir < "$path/.git" || gitdir=""
+      gitdir="${gitdir#gitdir: }"
+      [[ $gitdir == /* ]] || gitdir="$path/$gitdir"
+      if [[ -r "$gitdir/HEAD" ]]; then
+        IFS= read -r ref < "$gitdir/HEAD" || ref=""
+        [[ $ref == "ref: refs/heads/"* ]] && branch="${ref#ref: refs/heads/}"
+      fi
+    fi
+    printf '%s-%s | %s\n' "$org" "$repo" "$branch"
+  else
+    printf '%s-%s\n' "$org" "$repo"
+  fi
+}
+
+# List existing sessions by their friendly label. --no-sort in exec_fzf retains
+# this session-first order even after a query narrows both sessions and paths.
 function list_sessions() {
-  local current=""
+  local current="" name path label
+  local entries=()
+
   if [[ -n $TMUX ]]; then
     current=$(tmux display-message -p '#S' 2>/dev/null)
   fi
-  tmux list-sessions -F '#{session_last_attached} #{session_name}' 2>/dev/null |
-    sort -rn |
-    awk -v cur="$current" -v pfx="$SESSION_PREFIX" \
-      '$2 != cur { print pfx $2 }'
+
+  while IFS=$'\t' read -r name path; do
+    [[ $name == "$current" ]] && continue
+    label=$(session_label "$name" "$path")
+    entries+=("$label"$'\t'"$name")
+  done < <(tmux list-sessions -F $'#{session_name}\t#{session_path}' 2>/dev/null)
+
+  ((${#entries[@]})) || return
+  printf '%s\n' "${entries[@]}" | LC_ALL=C sort -f |
+    while IFS=$'\t' read -r label name; do
+      printf '%s%s\t%s\n' "$SESSION_PREFIX" "$label" "$name"
+    done
 }
 
-# list project dirs sorted by recency: newest git activity (FETCH_HEAD/HEAD
-# mtime) or dir mtime as fallback
-function list_directories_by_recency() {
+# Build project directories sorted by recency: newest Git activity
+# (FETCH_HEAD/HEAD mtime) or directory mtime as fallback.
+function build_directory_cache() {
   local dir ts candidates
   while IFS= read -r dir; do
     ts=""
@@ -110,16 +172,64 @@ function list_directories_by_recency() {
   done < <(list_search_directories) | sort -rn | cut -d' ' -f2-
 }
 
+function list_cached_directories() {
+  [[ -r $DIRECTORY_CACHE ]] || return
+  while IFS= read -r dir; do
+    [[ -n $dir && -d $dir ]] && printf '%s\n' "$dir"
+  done < "$DIRECTORY_CACHE"
+}
+
+function list_candidates() {
+  list_sessions
+  list_cached_directories
+}
+
+function refresh_directories() {
+  local temp
+
+  mkdir -p "$CACHE_DIR"
+  temp=$(mktemp "$CACHE_DIR/directories.XXXXXX")
+  trap 'rm -f "$temp"' RETURN
+  build_directory_cache > "$temp"
+  mv "$temp" "$DIRECTORY_CACHE"
+  trap - RETURN
+}
+
+function reload_candidates() {
+  local socket="$1" attempt
+  local auth=()
+
+  for ((attempt = 0; attempt < 20; attempt++)); do
+    [[ -S $socket ]] && break
+    sleep 0.05
+  done
+  [[ -S $socket ]] || return
+  [[ -n ${FZF_API_KEY:-} ]] && auth=(-H "x-api-key: $FZF_API_KEY")
+  curl --unix-socket "$socket" --fail --silent --show-error --max-time 1 --request POST "${auth[@]}" \
+    --data "reload($SCRIPT_PATH --candidates)" http >/dev/null 2>&1 || true
+}
+
+function refresh_in_background() {
+  local socket="$1"
+  sleep "$REFRESH_DELAY"
+  refresh_directories
+  reload_candidates "$socket"
+}
+
 # render the fzf preview for a picker entry (session or directory)
 function render_preview() {
   local entry="$1"
 
   if [[ "$entry" == "$SESSION_PREFIX"* ]]; then
-    local session="${entry#"$SESSION_PREFIX"}"
-    echo "tmux session: $session"
+    local session_entry="${entry#"$SESSION_PREFIX"}" display session pane
+    display="${session_entry%%$'\t'*}"
+    session="${session_entry#*$'\t'}"
+    [[ $session == "$session_entry" ]] && session="$display"
+    pane=$(tmux display-message -p -t "$session" \
+      'active pane: #{window_index}.#{pane_index} #{pane_current_command} - #{pane_current_path}' 2>/dev/null || true)
+    printf 'tmux session: %s%s\n' "$display" "${pane:+ | $pane}"
     echo
-    tmux list-windows -t "$session" \
-      -F '#I: #W#{?window_active, (active),}' 2>/dev/null
+    tmux capture-pane -ep -t "$session" -p 2>/dev/null
     return
   fi
 
@@ -163,7 +273,17 @@ create_session() {
 
 # ------------------------------------------------------------------- script ---
 
-# internal: fzf preview callback
+# internal helpers invoked by fzf
+if [[ "$1" == "--candidates" ]]; then
+  list_candidates
+  exit 0
+fi
+
+if [[ "$1" == "--refresh-directories" ]]; then
+  refresh_directories
+  exit 0
+fi
+
 if [[ "$1" == "--preview" ]]; then
   render_preview "$2"
   exit 0
@@ -172,13 +292,17 @@ fi
 if [[ $# -eq 1 ]]; then
   selected=$1
 else
+  candidate_file=$(mktemp "${TMPDIR:-/tmp}/tmux-sessionizer.XXXXXX")
+  socket="${TMPDIR:-/tmp}/tmux-sessionizer.$$.sock"
+  trap 'rm -f "$candidate_file" "$socket"' EXIT
   reap_dead_sessions
-  selected=$(
-    {
-      list_sessions
-      list_directories_by_recency
-    } | exec_fzf
-  )
+  list_candidates > "$candidate_file"
+  [[ -s $candidate_file ]] || exit 0
+  (
+    trap - EXIT
+    refresh_in_background "$socket"
+  ) &
+  selected=$(exec_fzf "$socket" < "$candidate_file") || exit 0
 fi
 
 if [[ -z $selected ]]; then
@@ -187,7 +311,9 @@ fi
 
 # existing session selected: switch/attach directly
 if [[ "$selected" == "$SESSION_PREFIX"* ]]; then
-  session="${selected#"$SESSION_PREFIX"}"
+  session_entry="${selected#"$SESSION_PREFIX"}"
+  session="${session_entry#*$'\t'}"
+  [[ $session == "$session_entry" ]] && session="$session_entry"
   if [[ -z $TMUX ]]; then
     tmux attach-session -t "$session"
   else
