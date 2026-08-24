@@ -1,4 +1,15 @@
 {
   "$schema": "https://opencode.ai/tui.json",
-  "theme": "catppuccin"
+  "theme": "catppuccin",
+  "plugin": [
+    [
+      "./tui-vim/index.tsx",
+      {
+        "enabled": true,
+        "initial_mode": "insert",
+        "indicator": true,
+        "system_clipboard": true
+      }
+    ]
+  ]
 }
