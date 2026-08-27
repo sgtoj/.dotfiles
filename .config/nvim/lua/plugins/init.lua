@@ -22,6 +22,14 @@ return {
     end,
   },
   {
+    "nvim-tree/nvim-tree.lua",
+    opts = {
+      git = {
+        timeout = 1000,
+      },
+    },
+  },
+  {
     "christoomey/vim-tmux-navigator",
     lazy = false,
   },
