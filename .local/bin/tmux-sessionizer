@@ -43,25 +43,36 @@ function get_fzf_path() {
 }
 
 function exec_fzf() {
-  local socket="$1" fzf_path
+  local socket="${1:-}" fzf_path
+  local -a args
   fzf_path=$(get_fzf_path)
 
-  $fzf_path \
-    --tmux center,90%,80% \
-    --sync \
-    --no-sort \
-    --track \
-    --listen="$socket" \
-    --delimiter=$'\t' \
-    --nth=1 \
-    --with-nth=1 \
-    --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \
-    --color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc \
-    --color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8 \
-    --color=selected-bg:#45475a \
-    --border="rounded" \
-    --preview-window="right,55%,border-left" \
+  # shellcheck disable=SC2054 # fzf's --tmux value is a comma-separated string.
+  args=(
+    "--tmux=center,90%,80%"
+    --delimiter=$'\t'
+    --nth=1
+    --with-nth=1
+    --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8
+    --color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc
+    --color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8
+    --color=selected-bg:#45475a
+    --border="rounded"
+    --preview-window="right,55%,border-left"
     --preview="$SCRIPT_PATH --preview {}"
+  )
+  if [[ -n $socket ]]; then
+    args+=(--sync --no-sort --track "--listen=$socket")
+  fi
+  "$fzf_path" "${args[@]}"
+}
+
+# Unix-domain sockets for --listen are new enough that common distro fzf
+# packages do not support them. Keep the fast reload path opt-in.
+function fzf_supports_dynamic_reload() {
+  local fzf_path="$1" help
+  help=$("$fzf_path" --help 2>&1) || return 1
+  [[ $help == *"--sync"* && $help == *"--track"* && $help == *"--listen=SOCKET_PATH"* ]]
 }
 
 # kill sessions whose working directory no longer exists (e.g. a worktree
@@ -184,6 +195,10 @@ function list_candidates() {
   list_cached_directories
 }
 
+function list_directories_now() {
+  build_directory_cache
+}
+
 function refresh_directories() {
   local temp
 
@@ -292,17 +307,32 @@ fi
 if [[ $# -eq 1 ]]; then
   selected=$1
 else
-  candidate_file=$(mktemp "${TMPDIR:-/tmp}/tmux-sessionizer.XXXXXX")
-  socket="${TMPDIR:-/tmp}/tmux-sessionizer.$$.sock"
-  trap 'rm -f "$candidate_file" "$socket"' EXIT
   reap_dead_sessions
-  list_candidates > "$candidate_file"
-  [[ -s $candidate_file ]] || exit 0
-  (
-    trap - EXIT
-    refresh_in_background "$socket"
-  ) &
-  selected=$(exec_fzf "$socket" < "$candidate_file") || exit 0
+  fzf_path=$(get_fzf_path)
+  if fzf_supports_dynamic_reload "$fzf_path"; then
+    # A cache is absent on fresh machines (including a new WSL install). Build
+    # it before opening fzf; otherwise the picker would exit with no entries.
+    [[ -s $DIRECTORY_CACHE ]] || refresh_directories
+    candidate_file=$(mktemp "${TMPDIR:-/tmp}/tmux-sessionizer.XXXXXX")
+    socket="${TMPDIR:-/tmp}/tmux-sessionizer.$$.sock"
+    trap 'rm -f "$candidate_file" "$socket"' EXIT
+    list_candidates > "$candidate_file"
+    [[ -s $candidate_file ]] || exit 0
+    (
+      trap - EXIT
+      refresh_in_background "$socket"
+    ) &
+    selected=$(exec_fzf "$socket" < "$candidate_file") || exit 0
+  else
+    # Older fzf versions cannot reload from a Unix socket. Match the original
+    # behaviour by calculating the directory order before showing the picker.
+    selected=$(
+      {
+        list_sessions
+        list_directories_now
+      } | exec_fzf
+    ) || exit 0
+  fi
 fi
 
 if [[ -z $selected ]]; then
