@@ -26,7 +26,11 @@
 
 set -uo pipefail
 
-PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+# The inherited PATH comes first: it is the one the user's tmux was actually launched
+# from. The extra directories are only a floor for hook invocations that arrive with a
+# stripped environment. Prepending them instead would shadow a package-manager tmux with a
+# distro one -- see resolve_tmux.
+PATH="$PATH:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH
 
 OPT="@oc_state"
@@ -34,9 +38,34 @@ WOPT="@oc_win"
 ALERT_OPT="@oc_alert"
 SOUND_CMD="${HOME}/.dotfiles/.local/bin/oc-sound"
 
-TMUX_BIN="$(command -v tmux 2>/dev/null || true)"
-[ -n "$TMUX_BIN" ] || TMUX_BIN="/opt/homebrew/bin/tmux"
-[ -x "$TMUX_BIN" ] || exit 0
+# A tmux client refuses to talk to a server built from a different major version, so the
+# tmux first on PATH is not necessarily a usable one. This is routine on Linux/WSL, where
+# a distro tmux in /usr/bin coexists with a newer Homebrew/linuxbrew build and every
+# command fails with "server exited unexpectedly".
+#
+# $TMUX carries the server pid, so on Linux the server's own binary can be read straight
+# out of /proc and is correct by construction. Elsewhere (macOS has no /proc) PATH is
+# already the right answer, because there is only one tmux.
+resolve_tmux() {
+  local pid exe
+
+  if [ -n "${TMUX:-}" ]; then
+    pid="${TMUX#*,}"
+    pid="${pid%%,*}"
+    exe="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+    # The name check guards a stale $TMUX whose pid has since been recycled by an
+    # unrelated process; PATH is a better guess than an arbitrary binary.
+    if [ -n "$exe" ] && [ -x "$exe" ] && [ "${exe##*/}" = "tmux" ]; then
+      printf '%s' "$exe"
+      return 0
+    fi
+  fi
+
+  command -v tmux 2>/dev/null
+}
+
+TMUX_BIN="$(resolve_tmux)"
+[ -n "$TMUX_BIN" ] && [ -x "$TMUX_BIN" ] || exit 0
 
 die() {
   printf 'oc-notify: %s\n' "$1" >&2
@@ -57,6 +86,16 @@ colour_for() {
     waiting) printf '#{@thm_red}' ;;
     error) printf '#{@thm_peach}' ;;
     *) printf '#{@thm_yellow}' ;;
+  esac
+}
+
+# Same glyphs as @oc_mark in .tmux.conf, so a toast and the window marker it corresponds
+# to are recognisably the same signal.
+icon_for() {
+  case "${1:-}" in
+    waiting) printf '◆' ;;
+    error) printf '▲' ;;
+    *) printf '●' ;;
   esac
 }
 
