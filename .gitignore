@@ -5,6 +5,7 @@
 .config/gh
 .config/go/telemetry
 .config/op
+.config/pulse/
 .config/sops
 .local/bin/atmos
 .local/bin/black
