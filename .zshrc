@@ -18,3 +18,5 @@ if [[ -n $ZSH_PROFILE ]]; then
   zprof >${XDG_CACHE_HOME:-$HOME/.cache}/zsh_profile.txt
   printf '%s\n' 'zsh profile written to ~/.cache/zsh_profile.txt'
 fi
+
+[ -s "/opt/homebrew/share/zsh/site-functions/_bun" ] && source "/opt/homebrew/share/zsh/site-functions/_bun"
