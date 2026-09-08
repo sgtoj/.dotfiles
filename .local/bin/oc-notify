@@ -2,9 +2,10 @@
 #
 # oc-notify -- surface opencode panes that need attention, across every tmux session.
 #
-# Driven by ~/.config/opencode/plugin/tmux-notify.ts. Everything visual renders inside
-# tmux; OpenCode's matching audio assets are played by oc-sound. State lives in tmux user
-# options so the status bar is event-driven and needs no polling:
+# Driven by the OpenCode 1 and OpenCode 2 TUI adapters under ~/.config/opencode.
+# Everything visual renders inside tmux; OpenCode's matching audio assets are played by
+# oc-sound. State lives in tmux user options so the status bar is event-driven and needs
+# no polling:
 #
 #   @oc_state  pane-scoped, the source of truth (waiting|done|error)
 #   @oc_win    window-scoped, highest severity in that window (drives the window marker)
@@ -156,7 +157,7 @@ refresh() {
     [ -n "${pane:-}" ] || continue
     [ -n "${st:-}" ] || continue
 
-    if [ "$cmd" != "opencode" ]; then
+    if [ "$cmd" != "opencode" ] && [ "$cmd" != "opencode2" ]; then
       $TMUX_BIN set-option -pu -t "$pane" "$OPT" 2>/dev/null
       continue
     fi

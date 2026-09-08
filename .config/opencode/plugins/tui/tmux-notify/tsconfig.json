@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "types": ["bun"],
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["tui.ts"]
+}
