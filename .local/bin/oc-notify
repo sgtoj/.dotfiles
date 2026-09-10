@@ -319,10 +319,10 @@ cmd_jump_to() {
   $TMUX_BIN select-window -t "$win" 2>/dev/null
   $TMUX_BIN select-pane -t "$pane" 2>/dev/null
 
-  # F24 is an internal binding registered by the V2 tmux-notify TUI plugin. It
+  # F12 is an internal binding registered by the V2 tmux-notify TUI plugin. It
   # reads @oc_session and focuses that root-session tab in the selected pane.
   [ "$($TMUX_BIN display-message -p -t "$pane" '#{pane_current_command}' 2>/dev/null)" = "opencode2" ] && \
-    $TMUX_BIN send-keys -t "$pane" F24 2>/dev/null
+    $TMUX_BIN send-keys -t "$pane" F12 2>/dev/null
 
   cmd_clear "$pane"
 }

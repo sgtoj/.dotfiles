@@ -61,7 +61,7 @@ export default Plugin.define({
         commands: [{
           id: "local.tmux-notify.focus-alerted-tab",
           title: "Focus alerted tmux tab",
-          bind: "f24",
+          bind: "f12",
           run: async () => {
             const sessionID = await alertedSession()
             if (!sessionID) return
@@ -74,7 +74,7 @@ export default Plugin.define({
         }],
       }))
     } catch {
-      // Older beta clients may not accept the internal F24 binding. Notifications
+      // Older beta clients may not accept the internal F12 binding. Notifications
       // remain available; only the automatic tab switch is disabled.
     }
 
