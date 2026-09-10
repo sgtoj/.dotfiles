@@ -1,6 +1,6 @@
 # Global Agent Instructions
 
-## GitHub prose
+## GitHub Prose
 
 When creating or editing GitHub pull request or issue titles, descriptions, or
 comments, write natural Markdown paragraphs. Do not hard-wrap prose at 80
@@ -8,6 +8,8 @@ columns. GitHub renders this content separately from repository Markdown files.
 
 Repository Markdown linting and style rules apply only to Markdown files
 committed to the repository, such as `README.md` and `docs/**/*.md`.
+
+## Git Worktrees
 
 Consider using a dedicated worktree before editing; it is optional for changes
 within the repository containing the current working directory.
