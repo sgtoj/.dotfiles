@@ -24,7 +24,9 @@ set -euo pipefail
 
 # items symlinked from the main checkout into new worktrees when present;
 # extend per-repo with: git config --add wt.link <path>
-DEFAULT_LINKS=(node_modules .venv .env .envrc)
+# Do not link node_modules: because worktrees live beneath the main checkout,
+# Node's normal ancestor lookup finds <main>/node_modules on its own.
+DEFAULT_LINKS=(.venv .env .envrc)
 
 # ---------------------------------------------------------------------- fns ---
 
@@ -84,6 +86,11 @@ function link_one() {
 function remove_links() {
   local root="$1" wt_dir="$2" item
 
+  # Clean up the node_modules link created by older versions of wt. Restrict
+  # this to the exact relative target wt used, so user-managed links remain.
+  [[ -L "$wt_dir/node_modules" && $(readlink "$wt_dir/node_modules") == "../../node_modules" ]] &&
+    rm "$wt_dir/node_modules"
+
   for item in "${DEFAULT_LINKS[@]}"; do
     [[ -L "$wt_dir/$item" ]] && rm "$wt_dir/$item"
   done
@@ -98,6 +105,10 @@ function remove_links() {
 
 function inject_links() {
   local root="$1" wt_dir="$2" item
+
+  # `wt link` also migrates existing worktrees away from the legacy link.
+  [[ -L "$wt_dir/node_modules" && $(readlink "$wt_dir/node_modules") == "../../node_modules" ]] &&
+    rm "$wt_dir/node_modules"
 
   for item in "${DEFAULT_LINKS[@]}"; do
     link_one "$root" "$wt_dir" "$item"
