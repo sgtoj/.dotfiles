@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Play the matching OpenCode v1.18.19 attention asset. The cache keeps the
-# notifier independent of macOS system sounds while avoiding a repository of
-# copied binary assets.
+# Play the matching OpenCode attention asset. The cache keeps the notifier
+# independent of macOS system sounds while avoiding a repository of copied
+# binary assets.
 
 set -euo pipefail
 

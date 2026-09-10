@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# daily-report - Generate a summary report from daily log metadata using OpenCode
+# daily-report - Generate a summary report from daily log metadata using OpenCode 2
 #
 # Usage:
 #   daily-report                    # Interactive mode
@@ -17,8 +17,8 @@ DATE_FORMAT="%Y-%m-%d"
 check_dependencies() {
     local missing=()
     
-    if ! command -v opencode &> /dev/null; then
-        missing+=("opencode")
+    if ! command -v opencode2 &> /dev/null; then
+        missing+=("opencode2")
     fi
     
     if ! command -v gum &> /dev/null; then
@@ -122,7 +122,7 @@ main() {
             -h|--help)
                 echo "Usage: daily-report [OPTIONS]"
                 echo ""
-                echo "Generate a summary report from daily log metadata using OpenCode."
+                echo "Generate a summary report from daily log metadata using OpenCode 2."
                 echo ""
                 echo "Options:"
                 echo "  -d, --date DATE    Date in YYYY-MM-DD format (default: today)"
@@ -179,7 +179,7 @@ main() {
         exit 1
     fi
     
-    # Build the prompt for OpenCode
+    # Build the prompt for OpenCode 2
     local prompt
     prompt=$(cat <<'PROMPT_EOF'
 You are analyzing a daily activity log. Based on the YAML metadata below, write a concise summary of what was accomplished.
@@ -202,9 +202,9 @@ You are analyzing a daily activity log. Based on the YAML metadata below, write 
 PROMPT_EOF
 )
     
-    # Run opencode with the log file
-    gum spin --spinner dot --title "OpenCode is generating report..." -- \
-        opencode run \
+    # Run OpenCode 2 with the log file
+    gum spin --spinner dot --title "OpenCode 2 is generating report..." -- \
+        opencode2 run \
             --file "$log_file" \
             "$prompt
 

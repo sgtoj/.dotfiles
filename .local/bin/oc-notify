@@ -2,7 +2,7 @@
 #
 # oc-notify -- surface opencode panes that need attention, across every tmux session.
 #
-# Driven by the OpenCode 1 and OpenCode 2 TUI adapters under ~/.config/opencode.
+# Driven by the OpenCode 2 TUI adapter under ~/.config/opencode.
 # Everything visual renders inside tmux; OpenCode's matching audio assets are played by
 # oc-sound. State lives in tmux user options so the status bar is event-driven and needs
 # no polling:
@@ -160,7 +160,7 @@ refresh() {
     [ -n "${pane:-}" ] || continue
     [ -n "${st:-}" ] || continue
 
-    if [ "$cmd" != "opencode" ] && [ "$cmd" != "opencode2" ]; then
+    if [ "$cmd" != "opencode2" ]; then
       $TMUX_BIN set-option -pu -t "$pane" "$OPT" 2>/dev/null
       continue
     fi
@@ -300,7 +300,7 @@ cmd_focus() {
 
   # OpenCode 2 may have alerts in a background tab, so focusing its tmux pane
   # alone is not enough to acknowledge them. Its TUI handles dismissal after it
-  # receives the tab-focus key below. V1 has one session per pane.
+  # receives the tab-focus key below.
   [ "$command" = "opencode2" ] || cmd_clear "$pane"
 }
 

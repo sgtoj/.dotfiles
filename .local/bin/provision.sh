@@ -74,7 +74,6 @@ BREW_PACKAGES=(
   tree-sitter-cli        # dev tool: code parsing (CLI, required by nvim-treesitter main)
   yq                     # dev tool
   zoxide                 # tool to navigate fs
-  anomalyco/tap/opencode # dev tool: ai tool
 )
 
 # macos only packages
