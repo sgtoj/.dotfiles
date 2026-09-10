@@ -35,7 +35,11 @@ export default Plugin.define({
     }
     const root = (sessionID: string) => context.data.session.root(sessionID) || sessionID
     const openRoots = () => {
-      const roots = new Set(context.ui.tabs.list().map((tab) => tab.sessionID))
+      // Tabs were added to the TUI API after this plugin's original API surface.
+      // Keep ordinary notifications working on clients that have the UI but do
+      // not expose its tab controller yet.
+      const tabs = context.ui.tabs
+      const roots = new Set(tabs?.enabled?.() ? tabs.list().map((tab) => tab.sessionID) : [])
       const current = currentSession()
       if (current) roots.add(root(current))
       return roots
@@ -50,23 +54,29 @@ export default Plugin.define({
       return output.trim()
     }
 
-    context.keymap.layer(() => ({
-      mode: "global",
-      priority: 10,
-      commands: [{
-        id: "local.tmux-notify.focus-alerted-tab",
-        title: "Focus alerted tmux tab",
-        bind: "f24",
-        run: async () => {
-          const sessionID = await alertedSession()
-          if (!sessionID) return
-          context.ui.tabs.open(sessionID)
-          context.ui.tabs.focus(sessionID)
-          context.ui.router.navigate({ type: "session", sessionID })
-          clear(sessionID)
-        },
-      }],
-    }))
+    try {
+      context.keymap.layer(() => ({
+        mode: "global",
+        priority: 10,
+        commands: [{
+          id: "local.tmux-notify.focus-alerted-tab",
+          title: "Focus alerted tmux tab",
+          bind: "f24",
+          run: async () => {
+            const sessionID = await alertedSession()
+            if (!sessionID) return
+            const tabs = context.ui.tabs
+            tabs?.open?.(sessionID)
+            tabs?.focus?.(sessionID)
+            context.ui.router.navigate({ type: "session", sessionID })
+            clear(sessionID)
+          },
+        }],
+      }))
+    } catch {
+      // Older beta clients may not accept the internal F24 binding. Notifications
+      // remain available; only the automatic tab switch is disabled.
+    }
 
     // Remove a stale marker left by a previous TUI process in this pane.
     clear()
