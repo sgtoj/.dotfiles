@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from urllib.parse import urlparse
+
+HOME = Path.home()
+CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
+PRIVATE_CONFIG = HOME / ".secrets" / "opencode" / "opencode.private.json"
+CLAUDE_JSON = Path(os.environ.get("CLAUDE_CONFIG_DIR") or HOME) / ".claude.json"
+
+SERVER_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+ENV_REF = re.compile(r"\{env:([^}]+)\}")
+FILE_REF = re.compile(r"\{file:([^}]+)\}")
+OAUTH_FIELDS = {
+    "client_id": "clientId",
+    "clientId": "clientId",
+    "callback_port": "callbackPort",
+    "scope": "scopes",
+    "auth_server_metadata_url": "authServerMetadataUrl",
+}
+
+
+def parse_jsonc(text):
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i : j + 1])
+            i = j + 1
+        elif text.startswith("//", i):
+            while i < n and text[i] != "\n":
+                i += 1
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+        else:
+            if c in "}]":
+                k = len(out) - 1
+                while k >= 0 and out[k].isspace():
+                    k -= 1
+                if k >= 0 and out[k] == ",":
+                    del out[k]
+            out.append(c)
+            i += 1
+    return json.loads("".join(out))
+
+
+def config_paths():
+    paths = [CONFIG_HOME / "opencode" / f for f in ("opencode.json", "opencode.jsonc")]
+    private = os.environ.get("OPENCODE_CONFIG")
+    paths.append(Path(private).expanduser() if private else PRIVATE_CONFIG)
+    return [p for p in paths if p.is_file()]
+
+
+def opencode_servers(paths):
+    servers = {}
+    for path in paths:
+        mcp = parse_jsonc(path.read_text()).get("mcp") or {}
+        nested = mcp.get("servers") if isinstance(mcp.get("servers"), dict) else {}
+        # V1 configs place servers directly under "mcp" instead of "mcp.servers".
+        legacy = {
+            k: v
+            for k, v in mcp.items()
+            if k != "servers" and isinstance(v, dict) and "type" in v
+        }
+        for name, server in {**legacy, **nested}.items():
+            servers[name] = (server, path.parent)
+    return servers
+
+
+def read_file_ref(path, base):
+    target = Path(path).expanduser()
+    if not target.is_absolute():
+        target = base / target
+    try:
+        return target.read_text().strip()
+    except OSError:
+        return ""
+
+
+def to_claude(value, base):
+    """Keep env references symbolic so Claude expands them at runtime."""
+    if isinstance(value, str):
+        value = ENV_REF.sub(lambda m: "${" + m.group(1) + "}", value)
+        return FILE_REF.sub(lambda m: read_file_ref(m.group(1), base), value)
+    if isinstance(value, list):
+        return [to_claude(v, base) for v in value]
+    if isinstance(value, dict):
+        return {k: to_claude(v, base) for k, v in value.items()}
+    return value
+
+
+def resolve(value, base):
+    value = ENV_REF.sub(lambda m: os.environ.get(m.group(1), ""), value)
+    return FILE_REF.sub(lambda m: read_file_ref(m.group(1), base), value)
+
+
+def convert(name, server, base):
+    kind = server.get("type")
+    secret = None
+    if kind == "local":
+        command = server.get("command")
+        if not isinstance(command, list) or not command:
+            return None, None
+        entry = {"type": "stdio", "command": command[0], "args": command[1:]}
+        if server.get("environment"):
+            entry["env"] = server["environment"]
+        if server.get("cwd"):
+            print(f"warning: {name}: Claude Code has no cwd option; ignoring it", file=sys.stderr)
+    elif kind == "remote" and server.get("url"):
+        entry = {"type": "http", "url": server["url"]}
+        if server.get("headers"):
+            entry["headers"] = server["headers"]
+        oauth = server.get("oauth")
+        if isinstance(oauth, dict):
+            mapped = {OAUTH_FIELDS[k]: v for k, v in oauth.items() if k in OAUTH_FIELDS}
+            redirect_port = urlparse(oauth.get("redirect_uri") or "").port
+            if redirect_port and "callbackPort" not in mapped:
+                mapped["callbackPort"] = redirect_port
+            if mapped:
+                entry["oauth"] = mapped
+            raw_secret = oauth.get("client_secret") or oauth.get("clientSecret")
+            if raw_secret:
+                secret = resolve(raw_secret, base)
+    else:
+        return None, None
+
+    timeout = server.get("timeout")
+    if isinstance(timeout, dict) and timeout.get("execution"):
+        entry["timeout"] = timeout["execution"]
+    return to_claude(entry, base), secret
+
+
+def claude_mcp(action, name, *extra, secret=None):
+    cmd = ["claude", "mcp", action, "--scope", "user", name, *extra]
+    env = os.environ.copy()
+    if secret:
+        cmd.append("--client-secret")
+        env["MCP_CLIENT_SECRET"] = secret
+    try:
+        subprocess.run(cmd, check=True, env=env, stdout=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        sys.exit(f"error: claude mcp {action} {name} failed")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Register OpenCode MCP servers as Claude Code user-scoped servers. "
+        "Only server names are printed."
+    )
+    parser.add_argument("-n", "--dry-run", action="store_true", help="show changes without applying them")
+    parser.add_argument("--prune", action="store_true", help="remove Claude user servers OpenCode does not define")
+    args = parser.parse_args()
+
+    paths = config_paths()
+    if not paths:
+        sys.exit("error: no OpenCode config found")
+
+    current = {}
+    if CLAUDE_JSON.is_file():
+        current = json.loads(CLAUDE_JSON.read_text()).get("mcpServers") or {}
+
+    prefix = "would " if args.dry_run else ""
+    wanted = {}
+    for name, (server, base) in sorted(opencode_servers(paths).items()):
+        if not SERVER_NAME.match(name):
+            print(f"skip {name} (Claude allows only letters, numbers, - and _)")
+        elif server.get("disabled") is True or server.get("enabled") is False:
+            print(f"skip {name} (disabled)")
+        else:
+            entry, secret = convert(name, server, base)
+            if entry is None:
+                print(f"skip {name} (unsupported config)")
+            else:
+                wanted[name] = (entry, secret)
+
+    for name, (entry, secret) in wanted.items():
+        existing = current.get(name)
+        # Re-adding a remote server discards its OAuth sign-in, so leave matches alone.
+        if existing == entry:
+            print(f"unchanged {name}")
+            continue
+        print(f"{prefix}{'update' if existing else 'add'} {name}")
+        if not args.dry_run:
+            if existing:
+                claude_mcp("remove", name)
+            claude_mcp("add-json", name, json.dumps(entry), secret=secret)
+
+    extra = sorted(set(current) - set(wanted))
+    for name in extra:
+        if args.prune:
+            print(f"{prefix}remove {name}")
+            if not args.dry_run:
+                claude_mcp("remove", name)
+        else:
+            print(f"extra {name} (not in OpenCode; --prune removes it)")
+
+
+if __name__ == "__main__":
+    main()
