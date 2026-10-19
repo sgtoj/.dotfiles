@@ -9,7 +9,7 @@
     "./tui": "./tui.ts"
   },
   "dependencies": {
-    "@opencode/plugin": "beta"
+    "@opencode/plugin": "latest"
   },
   "devDependencies": {
     "@types/bun": "1.4.0",

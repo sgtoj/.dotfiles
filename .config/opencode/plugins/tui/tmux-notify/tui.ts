@@ -74,7 +74,7 @@ export default Plugin.define({
         }],
       }))
     } catch {
-      // Older beta clients may not accept the internal F12 binding. Notifications
+      // Older clients may not accept the internal F12 binding. Notifications
       // remain available; only the automatic tab switch is disabled.
     }
 
@@ -93,7 +93,7 @@ export default Plugin.define({
       context.data.on("session.execution.started", (event) => {
         if (tracks(event.data.sessionID)) clear(event.data.sessionID)
       }),
-      // Older V2 beta builds publish status/idle compatibility events instead of the
+      // Earlier V2 builds publish status/idle compatibility events instead of the
       // durable execution pair. Listening to both is safe because oc-notify deduplicates.
       context.data.on("session.status", (event) => {
         if (tracks(event.data.sessionID) && event.data.status.type === "busy") clear(event.data.sessionID)
