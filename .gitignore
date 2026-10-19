@@ -2,6 +2,7 @@
 .aws/sso
 .aws/config
 .secrets
+.claude.json*
 .config/gh
 .config/go/telemetry
 .config/op

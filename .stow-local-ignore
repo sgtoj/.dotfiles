@@ -13,6 +13,7 @@ _darcs
 \.gitignore
 \.gitmodules
 ^/\.secrets
+\.claude\.json.*
 ^/\.opencode/bin
 
 .+~          # emacs backup files
