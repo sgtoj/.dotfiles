@@ -16,6 +16,7 @@ export FZF_DEFAULT_OPTS=" \
 --multi"
 
 export TELEPORT_TOOLS_VERSION=off
+export ATMOS_TELEMETRY_ENABLED=false
 export SHELLCHECK_OPTS='-S warning'
 
 # Keep internal MCP endpoints outside the shared dotfiles configuration.

@@ -2,7 +2,15 @@
 
 autoload -Uz compinit
 COMPDUMP="${XDG_CACHE_HOME:-${HOME}/.cache}/.zcompdump"
-compinit -C -d "${COMPDUMP}"
+# -C trusts the cached dump and never sees newly installed completions, so
+# rescan fpath once a day and touch the dump to restart the clock
+stale_compdump=(${COMPDUMP}(N.mh+24))
+if (( ${#stale_compdump} )); then
+  compinit -d "${COMPDUMP}" && touch "${COMPDUMP}"
+else
+  compinit -C -d "${COMPDUMP}"
+fi
+unset stale_compdump
 zinit cdreplay -q
 
 zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
