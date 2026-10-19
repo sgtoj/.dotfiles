@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+#
+# tmux-notify -- Claude Code hook adapter for oc-notify.
+#
+# The Claude counterpart of the OpenCode TUI plugin in
+# ~/.config/opencode/plugins/tui/tmux-notify. Both feed the same pane state, so the tmux
+# status bar counts every agent together. Registered for several hook events in
+# ~/.claude/settings.json. Claude Code passes the event as JSON on stdin and runs hooks
+# with its own environment, so $TMUX_PANE is the pane Claude is drawing in.
+
+set -uo pipefail
+
+PATH="$PATH:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH
+
+NOTIFY="${HOME}/.dotfiles/.local/bin/oc-notify"
+
+[ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] && [ -x "$NOTIFY" ] || exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+
+# One field per line. Detail is flattened, so it can never span lines.
+{
+  read -r event
+  read -r kind
+  read -r tool
+  read -r detail
+} < <(jq -r '
+  def text($candidates):
+    [$candidates[] | strings | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ") | select(. != "")]
+    | first // ""
+    | if length > 120 then .[:119] + "..." else . end;
+
+  .hook_event_name // "",
+  .notification_type // "",
+  .tool_name // "",
+  if .hook_event_name == "PermissionRequest" then
+    text([.tool_input.questions[0].question?, .tool_input.description?, .tool_input.command?,
+      .tool_input.file_path?, .tool_input.url?])
+  elif .hook_event_name == "StopFailure" then
+    text([.last_assistant_message, .error_details, .error])
+  else
+    text([.message])
+  end
+' 2>/dev/null)
+
+label="$(basename -- "${CLAUDE_PROJECT_DIR:-$PWD}")"
+
+flag() {
+  exec "$NOTIFY" set "$TMUX_PANE" "$1" "$label" "${2:-}" "${3:-$1}"
+}
+
+case "${event:-}" in
+  SessionStart | SessionEnd | UserPromptSubmit)
+    exec "$NOTIFY" clear "$TMUX_PANE"
+    ;;
+  PermissionRequest)
+    # AskUserQuestion and plan approval reach the user as permission dialogs.
+    case "$tool" in
+      AskUserQuestion) flag waiting "${detail:-asked a question}" question ;;
+      ExitPlanMode) flag waiting "plan ready for review" question ;;
+      *) flag waiting "$tool${detail:+: $detail}" permission ;;
+    esac
+    ;;
+  Notification)
+    # PermissionRequest already covers tool prompts immediately; these catch the dialogs
+    # it never sees, such as sandbox network requests and MCP elicitations.
+    case "$kind" in
+      permission_prompt) flag waiting "${detail:-needs permission}" permission ;;
+      elicitation_dialog | elicitation_url_dialog) flag waiting "${detail:-asked a question}" question ;;
+    esac
+    ;;
+  Stop)
+    flag 'done'
+    ;;
+  StopFailure)
+    flag error "${detail:-session error}"
+    ;;
+esac
+
+exit 0
