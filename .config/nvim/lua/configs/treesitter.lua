@@ -16,6 +16,9 @@ ts.setup {
   install_dir = vim.fn.stdpath "data" .. "/site",
 }
 
+-- setup prepends install_dir; keep this config's queries ahead of the bundled copies there.
+vim.opt.rtp:prepend(vim.fn.stdpath "config")
+
 -- Parsers to keep installed. Add/remove freely; existing parsers aren't removed.
 local parsers = {
   "bash",
