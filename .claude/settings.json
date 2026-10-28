@@ -91,5 +91,6 @@
     }
   },
   "theme": "custom:catppuccin-mocha",
-  "autoCompactEnabled": true
+  "autoCompactEnabled": true,
+  "switchModelsOnFlag": false
 }
