@@ -42,6 +42,7 @@ local parsers = {
   "regex",
   "scss",
   "sql",
+  "starlark",
   "svelte",
   "terraform",
   "tmux",
@@ -58,6 +59,7 @@ ts.install(parsers)
 
 -- Map filetypes that don't share a name with a parser.
 vim.treesitter.language.register("json", { "jsonc" })
+vim.treesitter.language.register("python", { "python3" })
 
 -- Filetypes we want treesitter highlighting on. Kept explicit (no auto_install).
 -- Maps parser name -> filetype(s). If nil, parser name == filetype.
@@ -79,6 +81,7 @@ local highlight_filetypes = {
   python = "python",
   scss = "scss",
   sql = "sql",
+  starlark = { "starlark", "bzl" },
   svelte = "svelte",
   terraform = "terraform",
   toml = "toml",
