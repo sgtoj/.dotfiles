@@ -1,0 +1,959 @@
+#!/usr/bin/env bash
+
+# -------------------------------------------------------------- description ---
+
+# pick a project directory or a running rex session and switch to it; the rex
+# counterpart of tmux-sessionizer
+#
+# picker layout:
+# - sessions first (excluding the current one), ordered by agent status:
+#   ◆ blocked, ▲ error, ● done, spinner working, then the rest by name
+# - project directories and worktrees after, most recently active first;
+#   directories that already have a session are left out
+#
+# usage:
+#   rex-sessionizer                 pick in this terminal, then switch the app
+#   rex-sessionizer DIR             open DIR as a session, then switch the app
+#   rex-sessionizer --pick RUN_DIR  pick, serving fzf on RUN_DIR/<block>.sock
+#   rex-sessionizer --open DIR      open DIR as a session, print its id
+#   rex-sessionizer --open-tab DIR  open DIR as a tab in $REX_SESSION
+#
+# cmd+o (the `sessionizer` action in ~/.config/rex/sessionizer.lua) runs
+# --pick in a floating pane. while it is open, rex handles enter, alt-enter,
+# and escape: it reads the highlighted row from the fzf socket, then switches
+# the app itself. switching the app from a shell needs Remote Control turned
+# on in rex settings.
+
+# ------------------------------------------------------------ configuration ---
+
+set -uo pipefail
+
+PATH="${REX_BIN_DIR:+$REX_BIN_DIR:}$PATH:$HOME/.local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin"
+export PATH
+
+SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
+printf -v SELF '%q' "$SCRIPT_PATH"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/rex-sessionizer"
+DIRECTORY_CACHE="$CACHE_DIR/directories"
+SESSION_STATE="$CACHE_DIR/sessions"
+REFRESH_DELAY=0.25
+CLOSE_CONFIRM_SECONDS=3
+LABEL_WIDTH_MAX=40
+FOOTER="enter open · alt-enter open as tab · ctrl-x close session · ctrl-a needs attention · ctrl-r refresh · ctrl-/ preview"
+
+function list_search_roots() {
+  printf '%s\n' ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp ~/repos/scrap ~/repos/gh
+}
+
+# catppuccin mocha
+RESET=$'\e[0m'
+BOLD=$'\e[1m'
+TEXT=$'\e[38;2;205;214;244m'
+SUBTEXT=$'\e[38;2;166;173;200m'
+OVERLAY=$'\e[38;2;108;112;134m'
+SURFACE=$'\e[38;2;88;91;112m'
+RED=$'\e[38;2;243;139;168m'
+PEACH=$'\e[38;2;250;179;135m'
+YELLOW=$'\e[38;2;249;226;175m'
+GREEN=$'\e[38;2;166;227;161m'
+BLUE=$'\e[38;2;137;180;250m'
+MAUVE=$'\e[38;2;203;166;247m'
+TEAL=$'\e[38;2;148;226;213m'
+
+# nerd font glyphs as utf-8 bytes, so editors and tools can't drop them
+printf -v ICON_SESSION '\xf3\xb0\x86\x8d'
+printf -v ICON_REPO '\xef\x90\x81'
+printf -v ICON_WORKTREE '\xf3\xb0\x99\x85'
+printf -v ICON_FOLDER '\xf3\xb0\x89\x8b'
+printf -v ICON_BRANCH '\xee\x9c\xa5'
+printf -v ICON_WORKING '\xf3\xb0\x94\x9f'
+
+US=$'\x1f'
+
+if stat -c '%Y' / >/dev/null 2>&1; then
+  STAT_MTIME=(stat -c '%Y')
+else
+  STAT_MTIME=(stat -f '%m')
+fi
+
+NOW=${EPOCHSECONDS:-$(date +%s)}
+
+# one rex call lists every session with each pane's program, directory, and
+# most urgent program status (OSC 7501, which Claude Code reports natively)
+read -r -d '' SESSIONS_LUA <<'LUA'
+local term = "com.superlogical.terminal"
+local rank = { blocked = 5, error = 4, done = 3, working = 2, idle = 1 }
+local only = rex.args and rex.args.only
+local out = {}
+local list = rex.call("session.list", {}) or {}
+for _, s in ipairs(list.sessions or {}) do
+  if only == nil or s.session_id == only then
+    local view = rex.call("session.view", { session_id = s.session_id })
+    local attached = false
+    if view == nil then
+      attached = rex.call("session.attach", { session_id = s.session_id }) ~= nil
+      view = rex.call("session.view", { session_id = s.session_id })
+    end
+    view = view or {}
+    local session = { id = s.session_id, label = s.label or "", windows = {} }
+    for index, w in ipairs(view.windows or {}) do
+      local window = { index = index, active = w.window_id == view.active_window_id, panes = {} }
+      for _, layer in ipairs(w.layers or {}) do
+        for _, b in ipairs(layer.blocks or {}) do
+          if b.creator_name == term then
+            local target = { session_id = s.session_id, block_id = b.block_id }
+            local status = rex.block.call(term, "program_status", target) or {}
+            local process = rex.block.call(term, "process", target) or {}
+            local fg = process.foreground or {}
+            local top
+            for _, r in ipairs(status.records or {}) do
+              if top == nil or (rank[r.state] or 0) > (rank[top.state] or 0) then top = r end
+            end
+            table.insert(window.panes, {
+              id = b.block_id,
+              focused = b.block_id == w.focused_block_id,
+              floating = layer.kind ~= "tiled",
+              program = fg.argv0 or fg.name or "",
+              cwd = fg.cwd or "",
+              state = top and top.state or "",
+              kind = top and top.kind or "",
+              app = top and (top.effective_app or top.app) or "",
+              msg = top and top.msg or "",
+            })
+          end
+        end
+      end
+      table.insert(session.windows, window)
+    end
+    if attached then rex.call("session.detach", { session_id = s.session_id }) end
+    table.insert(out, session)
+  end
+end
+return out
+LUA
+
+JQ_DEFS='
+def arr: if type == "array" then . else [] end;
+def rank: {"blocked": 5, "error": 4, "done": 3, "working": 2, "idle": 1}[. // ""] // 0;
+'
+
+JQ_SESSION_ROWS='
+arr
+| map(
+    ([.windows | arr[] | .panes | arr[]]) as $panes
+    | ([$panes[] | select((.state // "") != "")] | max_by(.state | rank)) as $top
+    | ([.windows | arr[] | select(.active)] | first // {}) as $window
+    | ([$window.panes | arr[] | select(.focused)] | first // {}) as $pane
+    | {
+        id,
+        label: (.label // ""),
+        state: ($top.state // ""),
+        kind: ($top.kind // ""),
+        app: ($top.app // ""),
+        tabs: (.windows | arr | length),
+        program: (($pane.program // "") | ltrimstr("-")),
+        cwd: ($pane.cwd // "")
+      })
+| sort_by([-(.state | rank), (.label | ascii_downcase)])
+| .[]
+| [.id, .label, .state, .kind, .app, (.tabs | tostring), .program, .cwd] | join("\u001f")
+'
+
+JQ_SESSION_PANES='
+arr | .[0] // {} | .windows | arr[]
+| .index as $index | .active as $active
+| .panes | arr | to_entries[]
+| [($index | tostring), (if .key == 0 then "first" else "" end), (if $active then "active" else "" end),
+   (if .value.focused then "focused" else "" end), (if .value.floating then "floating" else "" end),
+   .value.id, .value.state, .value.app, .value.msg, (.value.program | ltrimstr("-")), .value.cwd]
+| join("\u001f")
+'
+
+# ---------------------------------------------------------------------- fns ---
+
+function die() {
+  printf 'rex-sessionizer: %s\n' "$1" >&2
+  exit 2
+}
+
+# the first fzf new enough for the picker layout (--footer is 0.62+); an older
+# copy can sit earlier on PATH, such as ~/.local/bin/fzf
+function get_fzf_path() {
+  local candidate
+  while IFS= read -r candidate; do
+    [[ -x $candidate ]] || continue
+    [[ $("$candidate" --help 2>&1) == *--footer* ]] || continue
+    printf '%s\n' "$candidate"
+    return
+  done < <(
+    type -ap fzf
+    printf '%s\n' /opt/homebrew/bin/fzf /home/linuxbrew/.linuxbrew/bin/fzf "$HOME/repos/gh/fzf/bin/fzf"
+  )
+  die "fzf with --footer support not found"
+}
+
+function rex_sessions_json() {
+  rex "do" -e "$SESSIONS_LUA" "$@" 2>/dev/null
+}
+
+function live_session_ids() {
+  rex ls --json 2>/dev/null | jq -r '.sessions // [] | .[].session_id'
+}
+
+# ------------------------------------------------------------------ display ---
+
+function pad() {
+  local n=$(($2 - ${#1}))
+  ((n > 0)) || n=0
+  printf -v REPLY '%*s' "$n" ''
+}
+
+function tildify() {
+  local path="$1"
+  [[ $path == "$HOME" || $path == "$HOME"/* ]] && path="~${path#"$HOME"}"
+  REPLY="$path"
+}
+
+function format_age() {
+  local seconds=$((NOW - $1))
+  ((seconds > 0)) || seconds=0
+  if ((seconds < 3600)); then
+    printf -v REPLY '%dm' $((seconds / 60))
+  elif ((seconds < 86400)); then
+    printf -v REPLY '%dh' $((seconds / 3600))
+  elif ((seconds < 604800)); then
+    printf -v REPLY '%dd' $((seconds / 86400))
+  elif ((seconds < 2629800)); then
+    printf -v REPLY '%dw' $((seconds / 604800))
+  elif ((seconds < 31557600)); then
+    printf -v REPLY '%dmo' $((seconds / 2629800))
+  else
+    printf -v REPLY '%dy' $((seconds / 31557600))
+  fi
+}
+
+# org/repo:branch -> dim org, bold repo, mauve branch
+function format_label() {
+  local head="$1" branch="" org="" name
+  if [[ $head == *:* ]]; then
+    branch="${head#*:}"
+    head="${head%%:*}"
+  fi
+  if [[ $head == */* ]]; then
+    org="${head%/*}/"
+    name="${head##*/}"
+  else
+    name="$head"
+  fi
+  REPLY="${OVERLAY}${org}${TEXT}${BOLD}${name}${RESET}"
+  [[ -n $branch ]] && REPLY+="${MAUVE}:${branch}${RESET}"
+}
+
+function state_glyph() {
+  case "$1" in
+    blocked) REPLY="${RED}◆${RESET}" ;;
+    error) REPLY="${PEACH}▲${RESET}" ;;
+    done) REPLY="${YELLOW}●${RESET}" ;;
+    working) REPLY="${BLUE}${ICON_WORKING}${RESET}" ;;
+    *) REPLY=" " ;;
+  esac
+}
+
+function state_color() {
+  case "$1" in
+    blocked) REPLY="$RED" ;;
+    error) REPLY="$PEACH" ;;
+    done) REPLY="$YELLOW" ;;
+    working) REPLY="$BLUE" ;;
+    *) REPLY="$SUBTEXT" ;;
+  esac
+}
+
+# short, colored agent status for a list row: "claude needs approval"
+function status_label() {
+  local state="$1" kind="$2" app="${3%-code}" program="$4" text
+  case "$state" in
+    blocked)
+      case "$kind" in
+        permission) text="needs approval" ;;
+        question) text="has a question" ;;
+        auth) text="needs sign-in" ;;
+        *) text="needs you" ;;
+      esac
+      ;;
+    error) text="failed" ;;
+    done) text="done" ;;
+    working) text="working" ;;
+    *)
+      REPLY="${OVERLAY}${program}${RESET}"
+      return
+      ;;
+  esac
+  state_color "$state"
+  REPLY="${REPLY}${app:+$app }${text}${RESET}"
+}
+
+function section_header() {
+  local title="$1" count="$2" width="$3" text rule n
+  text="── ${title} · ${count} "
+  n=$((width - ${#text}))
+  ((n > 2)) || n=3
+  printf -v rule '%*s' "$n" ''
+  printf ' %s──%s %s%s%s %s· %s%s %s%s\t\t\theader\t\t\n' \
+    "$SURFACE" "$RESET" "$MAUVE" "$BOLD" "$title" "$RESET$OVERLAY" "$count" "$RESET" \
+    "$SURFACE${rule// /─}" "$RESET"
+}
+
+function status_text() {
+  local state="$1" app="${2:-agent}" msg="$3"
+  if [[ -z $msg ]]; then
+    case "$state" in
+      blocked) msg="needs you" ;;
+      error) msg="failed" ;;
+      done) msg="done" ;;
+      working) msg="working" ;;
+    esac
+  fi
+  ((${#msg} > 72)) && msg="${msg:0:71}…"
+  REPLY="${app}: ${msg}"
+}
+
+function dir_icon() {
+  if [[ $1 == */.worktrees/* ]]; then
+    REPLY="${MAUVE}${ICON_WORKTREE}${RESET}"
+  elif [[ -e $1/.git ]]; then
+    REPLY="${BLUE}${ICON_REPO}${RESET}"
+  else
+    REPLY="${OVERLAY}${ICON_FOLDER}${RESET}"
+  fi
+}
+
+# --------------------------------------------------------------- git & dirs ---
+
+# branch name read straight from HEAD; avoids a git process per entry
+function git_branch() {
+  local dir="$1" gitdir ref
+  if [[ -d $dir/.git ]]; then
+    gitdir="$dir/.git"
+  elif [[ -f $dir/.git ]]; then
+    IFS= read -r gitdir <"$dir/.git" || return 1
+    gitdir="${gitdir#gitdir: }"
+    [[ $gitdir == /* ]] || gitdir="$dir/$gitdir"
+  else
+    return 1
+  fi
+  [[ -r $gitdir/HEAD ]] || return 1
+  IFS= read -r ref <"$gitdir/HEAD" || return 1
+  if [[ $ref == "ref: refs/heads/"* ]]; then
+    REPLY="${ref#ref: refs/heads/}"
+  else
+    REPLY="${ref:0:7}"
+  fi
+}
+
+# ~/repos/<org>/<repo> -> org/repo, worktrees -> org/repo:branch
+function label_for() {
+  local dir="${1%/}" root branch="" org repo name
+  root="$dir"
+  if [[ $dir == */.worktrees/* ]]; then
+    root="${dir%/.worktrees/*}"
+    if git_branch "$dir"; then branch="$REPLY"; else branch="${dir##*/}"; fi
+  fi
+  repo="${root##*/}"
+  org="${root%/*}"
+  org="${org##*/}"
+  if [[ $root == "$HOME/.dotfiles" ]]; then
+    name="dotfiles"
+  elif [[ $root == "$HOME"/repos/*/* ]]; then
+    name="$org/$repo"
+  else
+    name="$repo"
+  fi
+  REPLY="${name}${branch:+:$branch}"
+}
+
+function list_search_directories() {
+  local root repo worktree
+  while IFS= read -r root; do
+    [[ -d $root ]] || continue
+    for repo in "$root"/* "$root"/.[!.]*; do
+      [[ -d $repo && ${repo##*/} != .worktrees ]] || continue
+      printf '%s\n' "$repo"
+      for worktree in "$repo"/.worktrees/*; do
+        [[ -d $worktree ]] && printf '%s\n' "$worktree"
+      done
+    done
+  done < <(list_search_roots)
+  printf '%s\n' "$HOME/.dotfiles"
+  for worktree in "$HOME"/.dotfiles/.worktrees/*; do
+    [[ -d $worktree ]] && printf '%s\n' "$worktree"
+  done
+}
+
+# newest git activity (FETCH_HEAD/HEAD mtime), else the directory's own mtime
+function directory_timestamp() {
+  local dir="$1" file
+  local -a candidates
+  if [[ $dir == */.worktrees/* ]]; then
+    candidates=("${dir%/.worktrees/*}/.git/worktrees/${dir##*/}/HEAD")
+  else
+    candidates=("$dir/.git/FETCH_HEAD" "$dir/.git/HEAD")
+  fi
+  for file in "${candidates[@]}" "$dir"; do
+    if [[ -e $file ]]; then
+      "${STAT_MTIME[@]}" "$file" 2>/dev/null && return
+    fi
+  done
+  printf '0\n'
+}
+
+function build_directory_cache() {
+  local dir
+  while IFS= read -r dir; do
+    printf '%s\t%s\n' "$(directory_timestamp "$dir")" "$dir"
+  done < <(list_search_directories) | sort -t $'\t' -k1,1nr
+}
+
+function refresh_directories() {
+  local temp
+  mkdir -p "$CACHE_DIR"
+  temp=$(mktemp "$CACHE_DIR/directories.XXXXXX") || return
+  build_directory_cache >"$temp"
+  mv "$temp" "$DIRECTORY_CACHE"
+}
+
+function reload_candidates() {
+  local socket="$1" attempt
+  for ((attempt = 0; attempt < 20; attempt++)); do
+    [[ -S $socket ]] && break
+    sleep 0.05
+  done
+  [[ -S $socket ]] || return
+  curl --unix-socket "$socket" --fail --silent --max-time 1 --request POST \
+    --data "reload($SELF --candidates)" http >/dev/null 2>&1 || true
+}
+
+function refresh_in_background() {
+  sleep "$REFRESH_DELAY"
+  refresh_directories
+  reload_candidates "$1"
+}
+
+# ------------------------------------------------------------ session state ---
+
+# rex sessions have no directory of their own, so the sessions opened here are
+# recorded as "<session id>\t<directory>" to find them again and to close the
+# ones whose directory is gone (a worktree removed outside `wt rm`)
+
+function state_dir() {
+  [[ -r $SESSION_STATE ]] || return 1
+  awk -F'\t' -v id="$1" '$1 == id { print $2; found = 1; exit } END { exit !found }' "$SESSION_STATE"
+}
+
+function state_session() {
+  [[ -r $SESSION_STATE ]] || return 1
+  awk -F'\t' -v dir="$1" '$2 == dir { print $1; found = 1; exit } END { exit !found }' "$SESSION_STATE"
+}
+
+function record_session() {
+  local temp
+  mkdir -p "$CACHE_DIR"
+  temp=$(mktemp "$CACHE_DIR/sessions.XXXXXX") || return
+  [[ -r $SESSION_STATE ]] && awk -F'\t' -v id="$1" -v dir="$2" '$1 != id && $2 != dir' "$SESSION_STATE" >"$temp"
+  printf '%s\t%s\n' "$1" "$2" >>"$temp"
+  mv "$temp" "$SESSION_STATE"
+}
+
+function forget_session() {
+  local temp
+  [[ -r $SESSION_STATE ]] || return 0
+  temp=$(mktemp "$CACHE_DIR/sessions.XXXXXX") || return
+  awk -F'\t' -v id="$1" '$1 != id' "$SESSION_STATE" >"$temp"
+  mv "$temp" "$SESSION_STATE"
+}
+
+function tidy_sessions() {
+  local live id dir temp
+  [[ -r $SESSION_STATE ]] || return 0
+  live=$(live_session_ids) || return 0
+  temp=$(mktemp "$CACHE_DIR/sessions.XXXXXX") || return
+  while IFS=$'\t' read -r id dir; do
+    [[ -n $id ]] && grep -Fxq -- "$id" <<<"$live" || continue
+    if [[ ! -d $dir && $id != "${REX_SESSION:-}" ]]; then
+      rex kill "$id" >/dev/null 2>&1
+      continue
+    fi
+    printf '%s\t%s\n' "$id" "$dir"
+  done <"$SESSION_STATE" >"$temp"
+  mv "$temp" "$SESSION_STATE"
+}
+
+# ---------------------------------------------------------------- open/close ---
+
+function session_for_dir() {
+  local dir="$1" id label live
+  live=$(rex ls --json 2>/dev/null | jq -r '.sessions // [] | .[] | [.session_id, (.label // "")] | join("\u001f")') || return 1
+  if id=$(state_session "$dir") && grep -q -- "^${id}${US}" <<<"$live"; then
+    printf '%s\n' "$id"
+    return
+  fi
+  label_for "$dir"
+  label="$REPLY"
+  id=$(awk -F"$US" -v label="$label" '$2 == label { print $1; exit }' <<<"$live")
+  [[ -n $id ]] || return 1
+  record_session "$id" "$dir"
+  printf '%s\n' "$id"
+}
+
+function open_dir() {
+  local dir id created
+  dir=$(cd -- "$1" 2>/dev/null && pwd) || return 1
+  if id=$(session_for_dir "$dir"); then
+    printf '%s\n' "$id"
+    return
+  fi
+  label_for "$dir"
+  created=$(rex new "$REPLY" -c "$dir" --json) || return 1
+  id=$(jq -r '.session_id // empty' <<<"$created")
+  [[ -n $id ]] || return 1
+  record_session "$id" "$dir"
+  printf '%s\n' "$id"
+}
+
+function open_tab() {
+  local dir="$1"
+  if [[ -z ${REX_SESSION:-} ]]; then
+    open_dir "$dir"
+    return
+  fi
+  label_for "$dir"
+  rex window new -s "$REX_SESSION" "${REPLY##*/}" -c "$dir" >/dev/null 2>&1
+}
+
+function switch_app() {
+  local id="$1" label
+  [[ -n $id && $id != "${REX_SESSION:-}" ]] || return 0
+  rex "do" session.select session_id="$id" >/dev/null 2>&1 && return 0
+  label=$(rex ls --json 2>/dev/null | jq -r --arg id "$id" '.sessions[]? | select(.session_id == $id) | .label')
+  printf '%s%s is open%s; switch to it with cmd+k\n' "$BOLD" "${label:-$id}" "$RESET" >&2
+  printf '%sturn on Remote Control in rex settings to let rex-sessionizer switch for you%s\n' "$OVERLAY" "$RESET" >&2
+  return 1
+}
+
+# ------------------------------------------------------------------- picker ---
+
+# one row per line, tab separated:
+#   marker, name (the only searched field), details, kind, target, label
+# fzf shows the first three (tabs drawn as one space via --tabstop=1); kind is
+# session, dir, or header (section rows, which never match a query)
+function list_candidates() {
+  local mode="all" sessions id label state kind app tabs program cwd dir branch ts
+  local label_width=0 branch_width=0 project_width=0 rule_width
+  local open_dirs=$'\n' open_labels=$'\n' row name details
+  local -a session_rows=() dir_rows=()
+
+  [[ -n ${PICKER_DIR:-} && -r $PICKER_DIR/mode ]] && mode=$(<"$PICKER_DIR/mode")
+
+  sessions=$(rex_sessions_json | jq -r "$JQ_DEFS $JQ_SESSION_ROWS" 2>/dev/null) || sessions=""
+  while IFS="$US" read -r id label state kind app tabs program cwd; do
+    [[ -n $id ]] || continue
+    open_labels+="$label"$'\n'
+    if dir=$(state_dir "$id"); then
+      open_dirs+="$dir"$'\n'
+    else
+      dir="$cwd"
+    fi
+    [[ $id == "${REX_SESSION:-}" ]] && continue
+    if [[ $mode == attention ]]; then
+      [[ $state == blocked || $state == error || $state == "done" ]] || continue
+    fi
+    branch=""
+    [[ $label != *:* && -n $dir ]] && git_branch "$dir" && branch="$REPLY"
+    ((${#label} > label_width)) && label_width=${#label}
+    ((${#branch} > branch_width)) && branch_width=${#branch}
+    session_rows+=("${id}${US}${label}${US}${state}${US}${kind}${US}${app}${US}${tabs}${US}${program}${US}${branch}")
+  done <<<"$sessions"
+
+  if [[ $mode != attention && -r $DIRECTORY_CACHE ]]; then
+    while IFS=$'\t' read -r ts dir; do
+      [[ -n $dir && -d $dir ]] || continue
+      [[ $open_dirs == *$'\n'"$dir"$'\n'* ]] && continue
+      label_for "$dir"
+      label="$REPLY"
+      [[ $open_labels == *$'\n'"$label"$'\n'* ]] && continue
+      ((${#label} > project_width)) && project_width=${#label}
+      dir_rows+=("${ts}${US}${dir}${US}${label}")
+    done <"$DIRECTORY_CACHE"
+  fi
+
+  ((label_width > LABEL_WIDTH_MAX)) && label_width=$LABEL_WIDTH_MAX
+  ((branch_width > 20)) && branch_width=20
+  ((project_width > LABEL_WIDTH_MAX + 8)) && project_width=$((LABEL_WIDTH_MAX + 8))
+  rule_width=$((label_width + branch_width + 32))
+  ((project_width + 8 > rule_width)) && rule_width=$((project_width + 8))
+  ((rule_width > 72)) && rule_width=72
+
+  if ((${#session_rows[@]})); then
+    [[ $mode == attention ]] || section_header "Sessions" "${#session_rows[@]}" "$rule_width"
+    for row in "${session_rows[@]}"; do
+      IFS="$US" read -r id label state kind app tabs program branch <<<"$row"
+      state_glyph "$state"
+      printf ' %s\t' "$REPLY"
+
+      format_label "$label"
+      name="$REPLY"
+      pad "$label" "$label_width"
+      name+="$REPLY"
+      if ((branch_width)); then
+        pad "$branch" "$branch_width"
+        name+="  ${MAUVE}${branch}${RESET}${REPLY}"
+      fi
+
+      details="${OVERLAY}${tabs} tab"
+      ((tabs == 1)) && details+=" "
+      ((tabs == 1)) || details+="s"
+      details+="$RESET  "
+      status_label "$state" "$kind" "$app" "$program"
+      details+="$REPLY"
+
+      printf '%s\t %s\tsession\t%s\t%s\n' "$name" "$details" "$id" "$label"
+    done
+  fi
+
+  if ((${#dir_rows[@]})); then
+    section_header "Projects" "${#dir_rows[@]}" "$rule_width"
+    for row in "${dir_rows[@]}"; do
+      IFS="$US" read -r ts dir label <<<"$row"
+      dir_icon "$dir"
+      printf ' %s\t' "$REPLY"
+      format_label "$label"
+      name="$REPLY"
+      pad "$label" "$project_width"
+      name+="$REPLY"
+      format_age "$ts"
+      printf '%s\t %s%3s%s\tdir\t%s\t%s\n' "$name" "$OVERLAY" "$REPLY" "$RESET" "$dir" "$label"
+    done
+  fi
+}
+
+function close_request() {
+  local kind="$1" id="$2" label="$3" pending_id="" pending_at=0
+  if [[ $kind != session ]]; then
+    printf 'change-footer:%s' "ctrl-x closes sessions"
+    return
+  fi
+  [[ -r $PICKER_DIR/close ]] && IFS=$'\t' read -r pending_id pending_at <"$PICKER_DIR/close"
+  if [[ $pending_id == "$id" ]] && ((NOW - pending_at <= CLOSE_CONFIRM_SECONDS)); then
+    rm -f "$PICKER_DIR/close"
+    rex kill "$id" >/dev/null 2>&1
+    forget_session "$id"
+    printf 'reload-sync(%s --candidates)+pos(2)+change-footer:%s' "$SELF" "$FOOTER"
+  else
+    printf '%s\t%s\n' "$id" "$NOW" >"$PICKER_DIR/close"
+    printf 'change-footer:%s' "press ctrl-x again to close $label"
+  fi
+}
+
+function toggle_attention() {
+  local mode="all"
+  [[ -r $PICKER_DIR/mode ]] && mode=$(<"$PICKER_DIR/mode")
+  if [[ $mode == attention ]]; then
+    printf 'all\n' >"$PICKER_DIR/mode"
+    printf 'reload-sync(%s --candidates)+pos(2)+change-list-label: Sessions & Projects ' "$SELF"
+  else
+    printf 'attention\n' >"$PICKER_DIR/mode"
+    printf 'reload-sync(%s --candidates)+first+change-list-label: Needs Attention ' "$SELF"
+  fi
+}
+
+function run_picker() {
+  local fzf_path socket
+  local -a args
+  fzf_path=$(get_fzf_path) || return 1
+  PICKER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/rex-sessionizer.XXXXXX") || return 1
+  export PICKER_DIR
+  trap 'rm -rf "$PICKER_DIR"' EXIT
+
+  [[ -s $DIRECTORY_CACHE ]] || refresh_directories
+  tidy_sessions
+  list_candidates >"$PICKER_DIR/candidates"
+
+  args=(
+    --ansi
+    --no-multi
+    --track
+    --sync
+    --delimiter=$'\t'
+    --with-nth=1..3
+    --nth=2
+    --tabstop=1
+    --ellipsis='…'
+    --expect=alt-enter
+    --style=full:rounded
+    --layout=reverse
+    --info=inline-right
+    --prompt='❯ '
+    --pointer='▌'
+    --ghost='project, worktree, or session'
+    --list-label=' Sessions & Projects '
+    --input-label=' Open '
+    --preview-label=' Preview '
+    --footer="$FOOTER"
+    --color='bg:-1,bg+:#313244,fg:#cdd6f4,fg+:#cdd6f4,hl:#f38ba8,hl+:#f38ba8'
+    --color='info:#6c7086,prompt:#cba6f7,pointer:#f5e0dc,spinner:#f5e0dc,marker:#b4befe'
+    --color='border:#45475a,label:#cdd6f4,list-label:#cba6f7,input-label:#89b4fa'
+    --color='preview-label:#f9e2af,footer:#6c7086,ghost:#585b70,selected-bg:#45475a'
+    --preview="$SELF --preview {4} {5}"
+    --preview-window='right,55%,<120(down,55%)'
+    --bind='start:pos(2)'
+    --bind="focus:change-footer:$FOOTER"
+    --bind="ctrl-x:transform:$SELF --close-request {4} {5} {6}"
+    --bind="ctrl-a:transform:$SELF --toggle-attention"
+    --bind="ctrl-r:reload($SELF --candidates)"
+    --bind='ctrl-/:toggle-preview'
+  )
+
+  socket="${PICKER_SOCKET:-$PICKER_DIR/fzf.sock}"
+  rm -f "$socket"
+  args+=("--listen=$socket")
+  (
+    trap - EXIT
+    refresh_in_background "$socket"
+  ) >/dev/null 2>&1 &
+
+  "$fzf_path" "${args[@]}" <"$PICKER_DIR/candidates"
+}
+
+# prints the session to switch to, if any
+function pick() {
+  local output status key line kind target
+  output=$(run_picker)
+  status=$?
+  case "$status" in
+    0) ;;
+    1 | 130) return 0 ;;
+    *) return "$status" ;;
+  esac
+  key=$(sed -n 1p <<<"$output")
+  line=$(sed -n 2p <<<"$output")
+  [[ -n $line ]] || return 0
+  kind=$(cut -f4 <<<"$line")
+  target=$(cut -f5 <<<"$line")
+  case "$kind" in
+    session) printf '%s\n' "$target" ;;
+    dir)
+      if [[ $key == alt-enter ]]; then
+        open_tab "$target"
+      else
+        open_dir "$target"
+      fi
+      ;;
+  esac
+}
+
+# ------------------------------------------------------------------ preview ---
+
+function strip_terminal_controls() {
+  perl -pe 's/\e\[(\d*)C/" " x ($1 || 1)/ge; s/\e\][^\a\e]*(?:\a|\e\\)//g; s/\e\[[0-9;?]*[A-Za-ln-z]//g'
+}
+
+function rule() {
+  local line
+  printf -v line '%*s' "${1:-40}" ''
+  printf '%s%s%s\n' "$OVERLAY" "${line// /─}" "$RESET"
+}
+
+function preview_session() {
+  local id="$1" json label dir columns lines used=0 preview_block=""
+  local index first active focused floating block state app msg program cwd tab marker
+  columns=${FZF_PREVIEW_COLUMNS:-80}
+  lines=${FZF_PREVIEW_LINES:-40}
+
+  json=$(rex_sessions_json only="$id") || return
+  label=$(jq -r 'if type == "array" then (.[0].label // "") else "" end' <<<"$json")
+  dir=$(state_dir "$id") || dir=""
+
+  local panes
+  panes=$(jq -r "$JQ_DEFS $JQ_SESSION_PANES" <<<"$json" 2>/dev/null)
+  if [[ -z $dir ]]; then
+    while IFS="$US" read -r index first active focused floating block state app msg program cwd; do
+      [[ $active == active && $focused == focused ]] && dir="$cwd"
+    done <<<"$panes"
+  fi
+
+  format_label "$label"
+  printf '%s%s%s %s' "$TEAL" "$ICON_SESSION" "$RESET" "$REPLY"
+  if [[ $label != *:* && -n $dir ]] && git_branch "$dir"; then
+    printf '   %s%s %s%s' "$MAUVE" "$ICON_BRANCH" "$REPLY" "$RESET"
+  fi
+  printf '\n'
+  tildify "$dir"
+  printf '%s%s%s\n\n' "$OVERLAY" "$REPLY" "$RESET"
+  used=3
+
+  while IFS="$US" read -r index first active focused floating block state app msg program cwd; do
+    [[ -n $block ]] || continue
+    tab="   "
+    if [[ $first == first ]]; then
+      if [[ $active == active ]]; then
+        printf -v tab '%s%s%2s%s ' "$BLUE" "$BOLD" "$index" "$RESET"
+      else
+        printf -v tab '%s%2s%s ' "$OVERLAY" "$index" "$RESET"
+      fi
+    fi
+    marker="  "
+    if [[ $active == active && $focused == focused ]]; then
+      marker="${BLUE}▸${RESET} "
+      preview_block="$block"
+    fi
+    state_glyph "$state"
+    printf '%s%s%s %s%-10s%s ' "$tab" "$marker" "$REPLY" "$TEXT" "${program:-?}" "$RESET"
+    if [[ -n $state && $state != idle ]]; then
+      state_color "$state"
+      printf '%s' "$REPLY"
+      status_text "$state" "$app" "$msg"
+      printf '%s%s' "$REPLY" "$RESET"
+    else
+      tildify "$cwd"
+      printf '%s%s%s' "$OVERLAY" "$REPLY" "$RESET"
+    fi
+    [[ $floating == floating ]] && printf ' %s(floating)%s' "$OVERLAY" "$RESET"
+    printf '\n'
+    used=$((used + 1))
+  done <<<"$panes"
+
+  [[ -n $preview_block ]] || return 0
+  rule "$columns"
+  used=$((used + 1))
+  ((lines - used > 2)) || return 0
+  rex capture -s "$id" -b "$preview_block" --format=vt --trim 2>/dev/null |
+    strip_terminal_controls | tail -n "$((lines - used))"
+  printf '%s' "$RESET"
+}
+
+function preview_directory() {
+  local dir="$1" root branch changes counts ahead behind worktree readme
+  [[ -d $dir ]] || return 0
+
+  dir_icon "$dir"
+  printf '%s  ' "$REPLY"
+  label_for "$dir"
+  format_label "$REPLY"
+  printf '%s' "$REPLY"
+
+  if git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+    branch=$(git -C "$dir" branch --show-current 2>/dev/null)
+    printf '   %s%s %s%s' "$MAUVE" "$ICON_BRANCH" "${branch:-detached}" "$RESET"
+    changes=$(git -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+    ((changes > 0)) && printf '  %s● %s changed%s' "$YELLOW" "$changes" "$RESET"
+    if counts=$(git -C "$dir" rev-list --left-right --count '@{upstream}...HEAD' 2>/dev/null); then
+      read -r behind ahead <<<"$counts"
+      ((ahead > 0)) && printf '  %s↑%s%s' "$GREEN" "$ahead" "$RESET"
+      ((behind > 0)) && printf '  %s↓%s%s' "$RED" "$behind" "$RESET"
+    fi
+    printf '\n'
+    tildify "$dir"
+    printf '%s%s' "$OVERLAY" "$REPLY"
+    format_age "$(directory_timestamp "$dir")"
+    printf ' · active %s ago%s\n\n' "$REPLY" "$RESET"
+    git -C "$dir" log --color=always --no-decorate -8 \
+      --format='%C(#f9e2af)%h%C(reset)  %C(#cdd6f4)%s%C(reset) %C(#6c7086)%cr%C(reset)' 2>/dev/null
+
+    if [[ $dir != */.worktrees/* ]]; then
+      local printed=0
+      for worktree in "$dir"/.worktrees/*; do
+        [[ -d $worktree ]] || continue
+        ((printed++)) || printf '\n%sworktrees%s\n' "$OVERLAY" "$RESET"
+        if git_branch "$worktree"; then :; else REPLY="${worktree##*/}"; fi
+        printf '  %s%s%s %s\n' "$MAUVE" "$ICON_WORKTREE" "$RESET" "$REPLY"
+      done
+    fi
+  else
+    printf '\n'
+    tildify "$dir"
+    printf '%s%s%s\n' "$OVERLAY" "$REPLY" "$RESET"
+  fi
+
+  for readme in "$dir/README.md" "$dir/readme.md" "$dir/README"; do
+    [[ -f $readme ]] || continue
+    printf '\n'
+    bat --style=plain --color=always --paging=never --line-range=:60 \
+      --theme="${BAT_THEME:-Catppuccin Mocha}" "$readme" 2>/dev/null ||
+      head -60 "$readme"
+    return 0
+  done
+
+  if [[ ! -e $dir/.git ]]; then
+    printf '\n'
+    if command -v eza >/dev/null 2>&1; then
+      eza -1 --icons=always --color=always --group-directories-first "$dir" 2>/dev/null | head -40
+    else
+      ls -1 "$dir" | head -40
+    fi
+  fi
+}
+
+function preview_legend() {
+  printf '%s◆%s needs you   %s▲%s failed   %s●%s done   %s%s%s working\n' \
+    "$RED" "$RESET" "$PEACH" "$RESET" "$YELLOW" "$RESET" "$BLUE" "$ICON_WORKING" "$RESET"
+}
+
+function render_preview() {
+  case "$1" in
+    session) preview_session "$2" ;;
+    dir) preview_directory "$2" ;;
+    header) preview_legend ;;
+  esac
+}
+
+# ------------------------------------------------------------------- script ---
+
+case "${1:-}" in
+  --candidates)
+    list_candidates
+    ;;
+  --preview)
+    render_preview "${2:-}" "${3:-}"
+    ;;
+  --close-request)
+    close_request "${2:-}" "${3:-}" "${4:-}"
+    ;;
+  --toggle-attention)
+    toggle_attention
+    ;;
+  --refresh-directories)
+    refresh_directories
+    ;;
+  --pick)
+    [[ -n ${2:-} && -n ${REX_BLOCK:-} ]] || die "usage: rex-sessionizer --pick RUN_DIR (in a rex terminal)"
+    mkdir -p "$2"
+    export PICKER_SOCKET="$2/${REX_BLOCK#block:}.sock"
+    id=$(pick) || exit
+    if [[ -n $id ]] && ! switch_app "$id"; then
+      printf '%spress any key to close%s' "$OVERLAY" "$RESET" >&2
+      read -r -s -n 1 -t 30 || true
+    fi
+    ;;
+  --open)
+    [[ -d ${2:-} ]] || die "not a directory: ${2:-}"
+    open_dir "$2" || die "could not open $2"
+    ;;
+  --open-tab)
+    [[ -d ${2:-} ]] || die "not a directory: ${2:-}"
+    open_tab "$2" || die "could not open $2"
+    ;;
+  -h | --help)
+    sed -n '5,25s/^# \{0,1\}//p' "$SCRIPT_PATH"
+    ;;
+  "")
+    id=$(pick) || exit
+    switch_app "$id"
+    ;;
+  *)
+    [[ -d $1 ]] || die "not a directory: $1"
+    id=$(open_dir "$1") || die "could not open $1"
+    switch_app "$id" || true
+    ;;
+esac
+
+exit 0
