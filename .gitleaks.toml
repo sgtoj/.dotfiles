@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "GPG signing key IDs are public"
+regexTarget = "line"
+regexes = ['''^\s*signingkey\s*=\s*[0-9A-Fa-f]{16,40}\s*$''']

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-push: gitleaks is required to push this public repo (brew install gitleaks)" >&2
+  exit 1
+fi
+
+while read -r _ local_sha _ remote_sha; do
+  [[ $local_sha =~ ^0+$ ]] && continue
+  if [[ ! $remote_sha =~ ^0+$ ]] && git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+    range="${remote_sha}..${local_sha}"
+  else
+    range="${local_sha} --not --remotes"
+  fi
+  gitleaks git --log-opts="$range" --redact --verbose --no-banner --log-level warn
+done
