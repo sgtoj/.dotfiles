@@ -1,13 +1,25 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # -------------------------------------------------------------- description ---
 
 # a script to find and clean git repositories by removing untracked files,
 # pruning stale branches, and running garbage collection
+#
+# usage:
+#   clean-git-repos        preview what would be removed
+#   clean-git-repos -f     remove it, prune, and gc
 
 # ------------------------------------------------------------ configuration ---
 
 REPO_BASE="$HOME/repos"
+
+KEEP_PATTERNS=(
+  .worktrees
+  .local
+  .secrets
+  .env
+  ".env.*"
+)
 
 # ---------------------------------------------------------------------- fns ---
 
@@ -20,40 +32,58 @@ log_error() {
 }
 
 clean_git_repo() {
-  local repo_path="$1"
+  local repo_path="$1" force="$2"
+  local -a excludes=()
+  local pattern
+  for pattern in "${KEEP_PATTERNS[@]}"; do
+    excludes+=(-e "$pattern")
+  done
+
+  if [[ $force != 1 ]]; then
+    log "would clean: $repo_path"
+    git -C "$repo_path" clean -ndx "${excludes[@]}"
+    return
+  fi
+
   log "cleaning repository: $repo_path"
 
-  pushd "$repo_path"
-
-  # fetch and prune stale branches
-  git fetch --prune || {
+  git -C "$repo_path" fetch --prune || {
     log_error "failed to fetch and prune in $repo_path"
     return
   }
 
-  # remove untracked files and directories
-  git clean -fdx || {
+  git -C "$repo_path" clean -fdx "${excludes[@]}" || {
     log_error "failed to clean untracked files in $repo_path"
     return
   }
 
-  # garbage collect and optimize
-  git gc --aggressive --prune=now || {
+  git -C "$repo_path" gc --aggressive --prune=now || {
     log_error "failed to run git gc in $repo_path"
     return
   }
-
-  popd
 
   log "completed cleaning: $repo_path"
 }
 
 # ------------------------------------------------------------------- script ---
 
-# iterate over repositories 2 (+1 for .git directory) levels deep
-find "$REPO_BASE" -mindepth 3 -maxdepth 3 -type d -name ".git" | while read -r git_dir; do
-  repo_dir=$(dirname "$git_dir")
-  clean_git_repo "$repo_dir"
-done
+force=0
+case "${1:-}" in
+  -f | --force) force=1 ;;
+  "") ;;
+  *)
+    echo "usage: $(basename "$0") [-f|--force]" >&2
+    exit 1
+    ;;
+esac
 
-log "all repositories cleaned!"
+# iterate over repositories 2 (+1 for .git directory) levels deep
+while read -r git_dir; do
+  clean_git_repo "$(dirname "$git_dir")" "$force"
+done < <(find "$REPO_BASE" -mindepth 3 -maxdepth 3 -type d -name ".git")
+
+if [[ $force == 1 ]]; then
+  log "all repositories cleaned!"
+else
+  log "dry run only; rerun with -f to clean"
+fi
