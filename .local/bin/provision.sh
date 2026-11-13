@@ -7,9 +7,10 @@
 #
 # features:
 # - works on macos and debian/ubuntu linux
-# - installs packages and binaries using brew, apt, and arkade
+# - installs packages using brew (Brewfile), apt, arkade, and uv
 # - creates directories for organizing workspaces
 # - clones and applies dotfiles using stow
+# - enables the dotfiles secret-scanning git hooks
 # - sets up ssh for github access
 # - configures node.js via fnm
 # - switches the default shell to zsh
@@ -17,7 +18,7 @@
 # ------------------------------------------------------------ configuration ---
 
 # all configuration options are centralized in this section below for easy and
-# quick modification
+# quick modification; homebrew packages live in the dotfiles Brewfile
 
 # linux only packages
 APT_PACKAGES=(
@@ -30,66 +31,26 @@ APT_PACKAGES=(
 
 # macos and linux binaries - https://github.com/alexellis/arkade
 ARKADE_TOOL_PACKAGES=(
-  k9s       # terminal ui for k8s
-  kubectl   # dev tool
-  kubeseal  # dev tool
-  kustomize # dev tool
-  op        # 1password cli (latest)
-  terraform # dev tool
-  tilt      # dev tool
+  helm        # dev tool
+  k9s         # terminal ui for k8s
+  kubeconform # dev tool
+  kubectl     # dev tool
+  kubeseal    # dev tool
+  kustomize   # dev tool
+  terraform   # dev tool
+  tilt        # dev tool
 )
 
-# linux only packages - https://github.com/alexellis/arkade?tab=readme-ov-file#install-system-packages
-ARKADE_SYSTEM_PACKAGES=(
-)
-
-# macos and linux packages
-BREW_PACKAGES=(
-  awscli                 # dev tool
-  bash                   # latest bash
-  bat                    # alternative to cat
-  btop                   # alternative to htop
-  eza                    # alternative to ls
-  deno                   # dev tool
-  fd                     # alternative to find
-  fzf                    # tool to fuzzy find
-  git                    # latest git
-  gh                     # dev tool: github cli
-  go                     # dev tool
-  httpie                 # alternative to curl
-  jq                     # dev tool
-  lazygit                # terminal ui for git
-  libgit2                # dependency: terraform
-  neovim                 # alternative to vim
-  fnm                    # dev tool: fast-node-manager
-  prettier               # dev tool for formatting
-  ripgrep                # alternative to grep
-  shellcheck             # dev tool: shell linting
-  starship               # terminal prompt
-  stow                   # tool to manage dotfiles
-  tmux                   # terminal multiplexer
-  tofu-ls                # dev tool for tf lsp
-  tree                   # tool to display dir
-  tree-sitter            # dev tool: code parsing (C library)
-  tree-sitter-cli        # dev tool: code parsing (CLI, required by nvim-treesitter main)
-  yq                     # dev tool
-  zoxide                 # tool to navigate fs
-)
-
-# macos only packages
-BREW_CASK_PACKAGES=(
-  1password-cli               # 1password cli
-  docker                      # dev tool
-  font-hack-nerd-font         # font
-  font-symbols-only-nerd-font # font
-  ghostty                     # terminal
-  git-credential-manager      # dev tool
-  orbstack                    # alternative to docker (mac only)
+# linux only binaries - macos installs these from the Brewfile
+ARKADE_LINUX_TOOL_PACKAGES=(
+  op # 1password cli
 )
 
 # ai tools installed with provider's script
 AI_TOOLS=(
   claudecode
+  codex
+  opencode
 )
 
 # python tools installed with uv tool
@@ -108,11 +69,15 @@ DIRECTORIES_TO_CREATE=(
   "$HOME/repos/sgtoj"
 )
 
-# dotfiles (skips if empty) - https://www.youtube.com/watch?v=y6XCebnB9gs
+# dotfiles - https://www.youtube.com/watch?v=y6XCebnB9gs
 DOTFILES_GIT_PATH="https://github.com/sgtoj/.dotfiles"
+DOTFILES_DIR="$HOME/.dotfiles"
 
 # default ssh key name for github.com (skips if empty)
 SSH_KEY_NAME_GITHUB="git"
+
+# node.js version installed with fnm and set as default
+NODE_VERSION=24
 
 # teleport binaries (brew's pkg is out of date) - https://goteleport.com/
 TELEPORT_VERSION=18.6.1
@@ -128,284 +93,276 @@ log_error() {
   echo -e "\033[1;31m[E] $1\033[0m" >&2
 }
 
-# ------------------------------------------------------------------- script ---
+is_macos() {
+  [[ $OSTYPE == darwin* ]]
+}
 
-# check and install homebrew if not already installed
-BREW_PREFIX=/opt/homebrew
-if [[ $OSTYPE != "darwin"* ]]; then
-  BREW_PREFIX=/home/linuxbrew/.linuxbrew
-fi
-if ! command -v brew &>/dev/null; then
-  log "installing homebrew"
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  if [[ $? -ne 0 ]]; then
-    log_error "failed to install homebrew"
-    exit 1
-  fi
-  echo >>"$HOME/.zprofile"
-  echo "eval \"\$($BREW_PREFIX/bin/brew shellenv)\"" >>"$HOME/.zprofile"
-else
-  log "homebrew already installed"
-fi
-eval "$($BREW_PREFIX/bin/brew shellenv)"
+install_homebrew() {
+  local prefix=/opt/homebrew
+  is_macos || prefix=/home/linuxbrew/.linuxbrew
 
-# ensure homebrew is up to date
-log "updating homebrew"
-brew update
-log "upgrading existing homebrew packages"
-brew upgrade
-
-# install essential packages
-for package in "${BREW_PACKAGES[@]}"; do
-  if ! brew list "$package" &>/dev/null; then
-    log "installing $package"
-    brew install "$package"
-    if [[ $? -ne 0 ]]; then
-      log_error "failed to install $package"
-    fi
+  if [[ -x $prefix/bin/brew ]]; then
+    log "homebrew already installed"
   else
-    log "$package is already installed"
-  fi
-done
-
-# install cask packages
-for cask in "${BREW_CASK_PACKAGES[@]}"; do
-  if [[ $OSTYPE != "darwin"* ]]; then
-    continue
-  fi
-  if ! brew list --cask "$cask" &>/dev/null; then
-    log "installing $cask"
-    brew install --cask "$cask"
-    if [[ $? -ne 0 ]]; then
-      log_error "failed to install $cask"
-    fi
-  else
-    log "$cask is already installed"
-  fi
-done
-
-# install apt packages
-for package in "${APT_PACKAGES[@]}"; do
-  if [[ $OSTYPE == "darwin"* ]]; then
-    continue
-  fi
-  if ! dpkg -l | grep -q "^ii  $package "; then
-    log "installing $package"
-    sudo apt install -y "$package"
-    if [[ $? -ne 0 ]]; then
-      log_error "failed to install $package"
-    fi
-  else
-    log "$package is already installed"
-  fi
-done
-
-# install arkade
-if ! command -v arkade &>/dev/null; then
-  log "installing arkade"
-  curl -sLS https://get.arkade.dev | sudo bash
-  if [[ $? -ne 0 ]]; then
-    log_error "failed to install arkade"
-    exit 1
-  fi
-else
-  log "arkade already installed"
-fi
-
-# install arkade system packages
-for arkade_package in "${ARKADE_SYSTEM_PACKAGES[@]}"; do
-  log "installing arkade package $arkade_package"
-  arkade system install "$arkade_package"
-  if [[ $? -ne 0 ]]; then
-    log_error "failed to install arkade system package $arkade_package"
-  fi
-  log "arkade system package $arkade_package installed"
-done
-
-# install arkade tool packages
-for arkade_package in "${ARKADE_TOOL_PACKAGES[@]}"; do
-  log "installing arkade package $arkade_package"
-  arkade get "$arkade_package"
-  if [[ $? -ne 0 ]]; then
-    log_error "failed to install arkade tool package $arkade_package"
-  fi
-  log "arkade tool package $arkade_package installed"
-done
-
-# install ai tools
-for ai_tool in "${AI_TOOLS[@]}"; do
-  if [[ $ai_tool == "claudecode" ]]; then
-    log "installing ai tool claude code"
-    curl -fsSL https://claude.ai/install.sh | bash
-  fi
-done
-
-# install uv if not already installed
-if ! command -v uv &>/dev/null; then
-  log "installing uv"
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  if [[ $? -ne 0 ]]; then
-    log_error "failed to install uv"
-  fi
-else
-  log "uv already installed"
-fi
-
-# install python tools with uv
-for uv_tool in "${UV_TOOLS[@]}"; do
-  tool_name=$(echo "$uv_tool" | awk '{print $1}')
-  if ! uv tool list 2>/dev/null | grep -q "^$tool_name "; then
-    log "installing uv tool $tool_name"
-    eval "uv tool install $uv_tool"
-    if [[ $? -ne 0 ]]; then
-      log_error "failed to install uv tool $tool_name"
-    fi
-  else
-    log "uv tool $tool_name already installed"
-  fi
-done
-
-# create directories if they don't exist
-for dir in "${DIRECTORIES_TO_CREATE[@]}"; do
-  if [[ ! -d "$dir" ]]; then
-    log "creating directory $dir"
-    mkdir -p "$dir"
-    if [[ $? -ne 0 ]]; then
-      log_error "failed to create directory $dir"
-    fi
-  else
-    log "directory $dir already exists"
-  fi
-done
-
-# clone dotfiles repo and run stow
-if [ -n "$DOTFILES_GIT_PATH" ]; then
-  DOTFILES_DIR="$HOME/.dotfiles"
-  if [[ ! -d "$DOTFILES_DIR" ]]; then
-    log "cloning dotfiles repo"
-    git clone "$DOTFILES_GIT_PATH" "$DOTFILES_DIR"
-    if [[ $? -ne 0 ]]; then
-      log_error "failed to clone dotfiles repo"
+    log "installing homebrew"
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
+      log_error "failed to install homebrew"
       exit 1
-    fi
-  else
-    log "dotfiles repo already cloned"
+    }
   fi
+  eval "$("$prefix/bin/brew" shellenv)"
 
-  pushd "$DOTFILES_DIR" >/dev/null || exit
+  log "updating homebrew"
+  brew update
+  log "upgrading existing homebrew packages"
+  brew upgrade
+}
 
-  log "preparing to symlink dotfiles"
-  mapfile -t STOW_LINKS < <(stow . -n -v 2>/dev/null | grep '^LINK:' | sed -n 's/^LINK: \(.*\) =>.*$/\1/p')
+clone_dotfiles() {
+  if [[ -d $DOTFILES_DIR ]]; then
+    log "dotfiles repo already cloned"
+    return
+  fi
+  log "cloning dotfiles repo"
+  git clone "$DOTFILES_GIT_PATH" "$DOTFILES_DIR" || {
+    log_error "failed to clone dotfiles repo"
+    exit 1
+  }
+}
 
-  for target in "${STOW_LINKS[@]}"; do
-    # skip if deeper than 1 level (slash in $target)
-    if [[ "$target" == */* ]]; then
-      continue
-    fi
+install_brew_packages() {
+  log "installing homebrew packages from Brewfile"
+  brew bundle install --file="$DOTFILES_DIR/Brewfile" ||
+    log_error "failed to install some homebrew packages"
+}
 
-    target_path="$HOME/$target"
-    if [[ -e "$target_path" ]]; then
-      log "renaming $target_path to $target_path.bak"
-      mv "$target_path" "$target_path.bak"
-      if [[ $? -ne 0 ]]; then
-        log_error "could not rename $target_path"
-        popd >/dev/null || exit
-        exit 1
-      fi
+install_apt_packages() {
+  is_macos && return
+  local package missing
+  missing=()
+  for package in "${APT_PACKAGES[@]}"; do
+    if dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"; then
+      log "$package is already installed"
+    else
+      missing+=("$package")
     fi
   done
+  [[ ${#missing[@]} -eq 0 ]] && return
+  log "installing apt packages: ${missing[*]}"
+  sudo apt-get update && sudo apt-get install -y "${missing[@]}" ||
+    log_error "failed to install apt packages"
+}
+
+install_arkade_tools() {
+  local tool tools
+  tools=("${ARKADE_TOOL_PACKAGES[@]}")
+  is_macos || tools+=("${ARKADE_LINUX_TOOL_PACKAGES[@]}")
+  for tool in "${tools[@]}"; do
+    log "installing arkade tool $tool"
+    arkade get "$tool" || log_error "failed to install arkade tool $tool"
+  done
+}
+
+install_ai_tools() {
+  local tool
+  for tool in "${AI_TOOLS[@]}"; do
+    log "installing ai tool $tool"
+    case $tool in
+      claudecode) curl -fsSL https://claude.ai/install.sh | bash ;;
+      codex) curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh ;;
+      opencode) curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path ;;
+      *) false ;;
+    esac || log_error "failed to install ai tool $tool"
+  done
+}
+
+install_uv_tools() {
+  local uv_tool tool_name
+  for uv_tool in "${UV_TOOLS[@]}"; do
+    tool_name=${uv_tool%% *}
+    if uv tool list 2>/dev/null | grep -q "^$tool_name "; then
+      log "uv tool $tool_name already installed"
+    else
+      log "installing uv tool $tool_name"
+      # shellcheck disable=SC2086
+      uv tool install $uv_tool || log_error "failed to install uv tool $tool_name"
+    fi
+  done
+}
+
+create_directories() {
+  local dir
+  for dir in "${DIRECTORIES_TO_CREATE[@]}"; do
+    if [[ -d $dir ]]; then
+      log "directory $dir already exists"
+    else
+      log "creating directory $dir"
+      mkdir -p "$dir" || log_error "failed to create directory $dir"
+    fi
+  done
+}
+
+stow_conflicts() {
+  stow -n -R . 2>&1 | sed -n \
+    -e 's/^  \* cannot stow .* over existing target \(.*\) since .*$/\1/p' \
+    -e 's/^  \* existing target is not owned by stow: \(.*\)$/\1/p'
+}
+
+stow_dotfiles() {
+  local suffix target
+  suffix=".bak.$(date +%Y%m%d%H%M%S)"
+
+  pushd "$DOTFILES_DIR" >/dev/null || exit 1
+
+  while IFS= read -r target; do
+    [[ -n $target ]] || continue
+    log "moving existing ~/$target to ~/$target$suffix"
+    mv "$HOME/$target" "$HOME/$target$suffix" || {
+      log_error "could not move ~/$target"
+      exit 1
+    }
+  done < <(stow_conflicts)
 
   log "running stow on dotfiles"
-  stow .
-  if [[ $? -ne 0 ]]; then
+  stow -R . || {
     log_error "failed to run stow on dotfiles"
-    popd >/dev/null || exit
     exit 1
-  fi
-  popd >/dev/null || exit
-fi
+  }
 
-# install node using fnm and set as default
-if command -v fnm &>/dev/null; then
+  popd >/dev/null || exit 1
+}
+
+enable_git_hooks() {
+  log "enabling dotfiles git hooks"
+  git -C "$DOTFILES_DIR" config core.hooksPath .githooks
+}
+
+install_node() {
+  if ! command -v fnm >/dev/null 2>&1; then
+    log_error "fnm is not installed"
+    return
+  fi
   eval "$(fnm env)"
-  log "installing node v25 using fnm"
-  fnm install 25
-  if [[ $? -ne 0 ]]; then
-    log_error "failed to install node v25"
+  log "installing node v$NODE_VERSION using fnm"
+  fnm install "$NODE_VERSION" || log_error "failed to install node v$NODE_VERSION"
+  log "setting node v$NODE_VERSION as default"
+  fnm default "$NODE_VERSION"
+}
+
+configure_ssh() {
+  local ssh_config="$HOME/.ssh/config"
+
+  if [[ ! -d $HOME/.ssh ]]; then
+    log "creating ~/.ssh directory"
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
   fi
-  log "setting node v25 as default"
-  fnm default 25
-else
-  log_error "fnm is not installed"
-fi
 
-# ensure ~/.ssh/config exists and configure github.com key
-SSH_CONFIG="$HOME/.ssh/config"
-if [[ ! -d "$HOME/.ssh" ]]; then
-  log "creating ~/.ssh directory"
-  mkdir -p "$HOME/.ssh"
-  chmod 700 "$HOME/.ssh"
-fi
+  if [[ ! -f $ssh_config ]]; then
+    log "creating ~/.ssh/config"
+    touch "$ssh_config"
+    chmod 600 "$ssh_config"
+  fi
 
-if [[ ! -f "$SSH_CONFIG" ]]; then
-  log "creating ~/.ssh/config"
-  touch "$SSH_CONFIG"
-  chmod 600 "$SSH_CONFIG"
-fi
-
-if [ -n "$SSH_KEY_NAME_GITHUB" ]; then
-  if ! grep -q "Host github.com" "$SSH_CONFIG"; then
-    log "configuring github.com key in ~/.ssh/config"
-    {
-      echo "Host github.com"
-      echo "  HostName github.com"
-      echo "  User git"
-      echo "  IdentityFile ~/.ssh/$SSH_KEY_NAME_GITHUB"
-    } >>"$SSH_CONFIG"
-  else
+  [[ -n $SSH_KEY_NAME_GITHUB ]] || return
+  if grep -q "Host github.com" "$ssh_config"; then
     log "github.com configuration already exists in ~/.ssh/config"
+    return
   fi
-fi
+  log "configuring github.com key in ~/.ssh/config"
+  {
+    echo "Host github.com"
+    echo "  HostName github.com"
+    echo "  User git"
+    echo "  IdentityFile ~/.ssh/$SSH_KEY_NAME_GITHUB"
+  } >>"$ssh_config"
+}
 
-# add aws ssm sessions plugin
-if [[ ! -f "/usr/local/bin/session-manager-plugin" ]]; then
+install_ssm_plugin() {
+  is_macos && return
+  if command -v session-manager-plugin >/dev/null 2>&1; then
+    log "aws session-manager plugin already installed"
+    return
+  fi
+
+  local arch tmp
+  case "$(dpkg --print-architecture)" in
+    arm64) arch=ubuntu_arm64 ;;
+    *) arch=ubuntu_64bit ;;
+  esac
+  tmp=$(mktemp -d)
+
   log "installing aws session-manager plugin"
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/mac/sessionmanager-bundle.zip" -o "sessionmanager-bundle.zip"
-    unzip sessionmanager-bundle.zip
-    sudo ./sessionmanager-bundle/install -i /usr/local/sessionmanagerplugin -b /usr/local/bin/session-manager-plugin
-  else
-    curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o "session-manager-plugin.deb"
-    sudo dpkg -i session-manager-plugin.deb
+  curl -fsSL -o "$tmp/session-manager-plugin.deb" \
+    "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/$arch/session-manager-plugin.deb" &&
+    sudo dpkg -i "$tmp/session-manager-plugin.deb" ||
+    log_error "failed to install aws session-manager plugin"
+  rm -rf "$tmp"
+}
+
+install_teleport() {
+  if command -v tsh >/dev/null 2>&1; then
+    log "teleport already installed"
+    return
   fi
-  rm -rf sessionmanager-bundle*
-  rm session-manager-*
-fi
 
-# add teleport binaries
-if ! command -v tsh &>/dev/null && ! command -v tctl &>/dev/null; then
-  log "installing teleport binaries"
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    curl -O https://cdn.teleport.dev/teleport-${TELEPORT_VERSION}.pkg
-    sudo installer -pkg teleport-${TELEPORT_VERSION}.pkg -target /
+  log "installing teleport $TELEPORT_VERSION"
+  if is_macos; then
+    local tmp
+    tmp=$(mktemp -d)
+    curl -fsSL -o "$tmp/teleport.pkg" "https://cdn.teleport.dev/teleport-${TELEPORT_VERSION}.pkg" &&
+      sudo installer -pkg "$tmp/teleport.pkg" -target / ||
+      log_error "failed to install teleport"
+    rm -rf "$tmp"
   else
-    curl https://cdn.teleport.dev/install-v${TELEPORT_VERSION}.sh | bash -s ${TELEPORT_VERSION} ${TELEPORT_EDITION}
+    curl -fsSL "https://cdn.teleport.dev/install-v${TELEPORT_VERSION}.sh" |
+      bash -s "$TELEPORT_VERSION" "$TELEPORT_EDITION" ||
+      log_error "failed to install teleport"
   fi
-  rm teleport-*
-fi
+}
 
-# add to docker group if linux
-if [[ "$OSTYPE" != "darwin"* && ! $(groups $USER) =~ \bdocker\b ]]; then
-  sudo groupadd docker
-  sudo gpasswd -a $USER docker
-  newgrp docker
-fi
+configure_docker_group() {
+  is_macos && return
+  id -nG "$USER" | grep -qw docker && return
+  getent group docker >/dev/null || sudo groupadd docker
+  sudo usermod -aG docker "$USER"
+  log "added $USER to the docker group; log out and back in to apply it"
+}
 
-# set zsh as the default shell
-ZSH_PATH=$(command -v zsh)
-if [[ "$SHELL" != "$ZSH_PATH" ]]; then
-  log "changing default shell to zsh at $ZSH_PATH"
-  chsh -s "$ZSH_PATH"
-fi
+set_default_shell() {
+  local zsh_path
+  zsh_path=$(command -v zsh)
+  if [[ $SHELL != "$zsh_path" ]]; then
+    log "changing default shell to zsh at $zsh_path"
+    chsh -s "$zsh_path"
+  fi
+}
 
-log "provisioning complete"
+# ------------------------------------------------------------------- script ---
+
+main() {
+  install_homebrew
+  clone_dotfiles
+  install_brew_packages
+  install_apt_packages
+
+  export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
+  install_arkade_tools
+  install_ai_tools
+  install_uv_tools
+
+  create_directories
+  stow_dotfiles
+  enable_git_hooks
+
+  install_node
+  configure_ssh
+  install_ssm_plugin
+  install_teleport
+  configure_docker_group
+  set_default_shell
+
+  log "provisioning complete"
+}
+
+main "$@"
