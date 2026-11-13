@@ -2,12 +2,25 @@
 
 # -------------------------------------------------------------- description ---
 
-# script to select a project directory interactively and then opens or switches
-# to a corresponding tmux session for project directory
+# pick a project directory, a running tmux session, or an agent and switch to
+# it; the tmux counterpart of rex-sessionizer
 #
-# picker layout:
-# - existing tmux sessions first (prefixed with ●), excluding the current one
-# - cached project directories after; refreshed by recency in the background
+# views (tab switches between them):
+# - sessions: sessions first (excluding the current one), ordered by agent
+#   status (◆ needs you, ▲ failed, ● done, 󰔟 working, then the rest by name),
+#   then project directories and worktrees, most recently active first;
+#   directories that already have a session are left out
+# - agents: every claude and opencode pane (excluding the current one), most
+#   urgent first, with what it is asking or working on
+#
+# usage:
+#   tmux-sessionizer           pick, then open or switch to a session
+#   tmux-sessionizer --agents  start in the agents view
+#   tmux-sessionizer DIR       open DIR as a session, then switch to it
+#
+# agent status comes from the @oc_* pane options kept by oc-notify. fzf 0.62+
+# gets the full picker; an older fzf gets a plain one without tab, ctrl-x and
+# ctrl-a.
 #
 # credit:
 # - script is based on a script written by primeagen
@@ -15,376 +28,1268 @@
 
 # ------------------------------------------------------------ configuration ---
 
-SESSION_PREFIX="● "
-SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/tmux-sessionizer"
-DIRECTORY_CACHE="$CACHE_DIR/directories"
-REFRESH_DELAY=0.25
+set -uo pipefail
 
-function list_search_directories() {
-  find ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp ~/repos/scrap ~/repos/gh \
-    -mindepth 1 -maxdepth 1 -type d ! -name .worktrees 2>/dev/null
-  echo "$HOME/.dotfiles"
+SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
+printf -v SELF '%q' "$SCRIPT_PATH"
+NOTIFY="${SCRIPT_PATH%/*}/oc-notify"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/tmux-sessionizer"
+DIRECTORY_CACHE="$CACHE_DIR/projects"
+REFRESH_DELAY=0.25
+CLOSE_CONFIRM_SECONDS=3
+LABEL_WIDTH_MAX=40
+FOOTER_SESSIONS="enter open · alt-enter open as window · ctrl-x close session · ctrl-a needs attention · tab agents · ctrl-r refresh · ctrl-/ preview"
+FOOTER_AGENTS="enter jump · ctrl-x close agent · ctrl-a needs attention · tab sessions · ctrl-r refresh · ctrl-/ preview"
+PLAIN_HEADER_SESSIONS="enter open · alt-enter open as window · ctrl-r refresh · ctrl-/ preview"
+PLAIN_HEADER_AGENTS="enter jump · ctrl-r refresh · ctrl-/ preview"
+DETAIL_WIDTH_MAX=60
+
+function list_search_roots() {
+  printf '%s\n' ~/repos/mpz ~/repos/cs ~/repos/sgtoj ~/repos/pp ~/repos/scrap ~/repos/gh
 }
+
+# catppuccin mocha
+RESET=$'\e[0m'
+BOLD=$'\e[1m'
+TEXT=$'\e[38;2;205;214;244m'
+SUBTEXT=$'\e[38;2;166;173;200m'
+OVERLAY=$'\e[38;2;108;112;134m'
+SURFACE=$'\e[38;2;88;91;112m'
+RED=$'\e[38;2;243;139;168m'
+PEACH=$'\e[38;2;250;179;135m'
+YELLOW=$'\e[38;2;249;226;175m'
+GREEN=$'\e[38;2;166;227;161m'
+BLUE=$'\e[38;2;137;180;250m'
+MAUVE=$'\e[38;2;203;166;247m'
+TEAL=$'\e[38;2;148;226;213m'
+
+# nerd font glyphs as utf-8 bytes, so editors and tools can't drop them
+printf -v ICON_SESSION '\xf3\xb0\x86\x8d'
+printf -v ICON_REPO '\xef\x90\x81'
+printf -v ICON_WORKTREE '\xf3\xb0\x99\x85'
+printf -v ICON_FOLDER '\xf3\xb0\x89\x8b'
+printf -v ICON_BRANCH '\xee\x9c\xa5'
+printf -v ICON_WORKING '\xf3\xb0\x94\x9f'
+printf -v ICON_AGENT '\xf3\xb0\x9a\xa9'
+
+US=$'\x1f'
+
+if stat -c '%Y' / >/dev/null 2>&1; then
+  STAT_MTIME=(stat -c '%Y')
+else
+  STAT_MTIME=(stat -f '%m')
+fi
+
+NOW=${EPOCHSECONDS:-$(date +%s)}
+
+PANE_FORMAT="#{session_name}${US}#{session_path}${US}#{session_windows}${US}#{window_active}${US}#{pane_active}${US}#{@oc_state}${US}#{pane_current_command}${US}#{@oc_busy}"
+AGENT_FORMAT="#{pane_id}${US}#{session_name}${US}#{session_path}${US}#{window_index}${US}#{pane_index}${US}#{pane_current_command}${US}#{pane_current_path}${US}#{@oc_state}${US}#{@oc_busy}${US}#{@oc_since}${US}#{@oc_detail}${US}#{@oc_transcript}"
+
+# one row per session: rank, name, path, windows, state, agent, program. the
+# state is the most urgent oc-notify flag or busy mark on an agent pane; marks
+# left on panes whose agent has exited are ignored, as oc-notify does
+read -r -d '' AWK_SESSIONS <<'AWK'
+BEGIN { FS = OFS = "\037"; rank["waiting"] = 4; rank["error"] = 3; rank["done"] = 2 }
+{
+  name = $1
+  if (!(name in path)) { order[++n] = name; path[name] = $2; windows[name] = $3; top[name] = 0 }
+  cmd = $7
+  sub(/^-/, "", cmd)
+  agent = ""
+  if (cmd ~ /^opencode2?$/) agent = "opencode"
+  else if (cmd == "claude" || cmd ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) agent = "claude"
+  if (agent != "") {
+    if ($6 in rank) { r = rank[$6]; s = $6 }
+    else if ($8 == "1") { r = 1; s = "working" }
+    else { r = 0; s = "" }
+    if (r > top[name]) { top[name] = r; state[name] = s; app[name] = agent }
+  }
+  if ($4 == "1" && $5 == "1") program[name] = (agent != "" ? agent : cmd)
+}
+END {
+  for (i = 1; i <= n; i++) {
+    s = order[i]
+    print top[s], s, path[s], windows[s], state[s], app[s], program[s]
+  }
+}
+AWK
 
 # ---------------------------------------------------------------------- fns ---
 
+function die() {
+  printf 'tmux-sessionizer: %s\n' "$1" >&2
+  exit 2
+}
+
+# the first fzf new enough for the full picker (--footer is 0.62+); an older
+# copy can sit earlier on PATH. any fzf still gets the plain picker
 function get_fzf_path() {
-  local fzf_path
-  fzf_path=$(which fzf || true)
-  if [ -d "${HOME}/repos/gh/fzf/bin/" ]; then
-    fzf_path="${HOME}/repos/gh/fzf/bin/fzf"
-  fi
-  if [ ! -f "${fzf_path}" ]; then
-    echo "ERROR: fzf not found"
-    exit 0
-  fi
-  echo "${fzf_path}"
-}
-
-function exec_fzf() {
-  local socket="${1:-}" fzf_path
-  local -a args
-  fzf_path=$(get_fzf_path)
-
-  # shellcheck disable=SC2054 # fzf's --tmux value is a comma-separated string.
-  args=(
-    "--tmux=center,90%,80%"
-    --delimiter=$'\t'
-    --nth=1
-    --with-nth=1
-    --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8
-    --color=fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc
-    --color=marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8
-    --color=selected-bg:#45475a
-    --border="rounded"
-    --preview-window="right,55%,border-left"
-    --preview="$SCRIPT_PATH --preview {}"
+  local candidate fallback=""
+  while IFS= read -r candidate; do
+    [[ -x $candidate ]] || continue
+    [[ -n $fallback ]] || fallback="$candidate"
+    [[ $("$candidate" --help 2>&1) == *--footer* ]] || continue
+    printf '%s\n' "$candidate"
+    return
+  done < <(
+    printf '%s\n' "$HOME/repos/gh/fzf/bin/fzf"
+    type -ap fzf
   )
-  if [[ -n $socket ]]; then
-    args+=(--sync --no-sort --track "--listen=$socket")
-  fi
-  "$fzf_path" "${args[@]}"
+  [[ -n $fallback ]] || die "fzf not found"
+  printf '%s\n' "$fallback"
 }
 
-# Unix-domain sockets for --listen are new enough that common distro fzf
-# packages do not support them. Keep the fast reload path opt-in.
-function fzf_supports_dynamic_reload() {
-  local fzf_path="$1" help
-  help=$("$fzf_path" --help 2>&1) || return 1
-  [[ $help == *"--sync"* && $help == *"--track"* && $help == *"--listen=SOCKET_PATH"* ]]
+function current_session() {
+  [[ -n ${TMUX:-} ]] || return 0
+  tmux display-message -p '#S' 2>/dev/null
 }
 
-# kill sessions whose working directory no longer exists (e.g. a worktree
-# removed outside of `wt rm`, such as via lazygit)
-function reap_dead_sessions() {
-  local current="" name path
-  if [[ -n $TMUX ]]; then
-    current=$(tmux display-message -p '#S' 2>/dev/null)
-  fi
-  while IFS=$'\t' read -r name path; do
-    if [[ $name != "$current" && -n $path && ! -d $path ]]; then
-      tmux kill-session -t "$name" 2>/dev/null
-    fi
-  done < <(tmux list-sessions -F $'#{session_name}\t#{session_path}' 2>/dev/null)
+# ------------------------------------------------------------------ display ---
+
+function pad() {
+  local n=$(($2 - ${#1}))
+  ((n > 0)) || n=0
+  printf -v REPLY '%*s' "$n" ''
 }
 
-function session_label() {
-  local name="$1" path="$2" root parent org repo branch gitdir ref worktree=0
-  [[ -n $path ]] || {
-    printf '%s\n' "$name"
-    return
-  }
+function tildify() {
+  local path="$1"
+  [[ $path == "$HOME" || $path == "$HOME"/* ]] && path="~${path#"$HOME"}"
+  REPLY="$path"
+}
 
-  if [[ $path == */.worktrees/* ]]; then
-    root="${path%/.worktrees/*}"
-    worktree=1
+function format_age() {
+  local seconds=$((NOW - $1))
+  ((seconds > 0)) || seconds=0
+  if ((seconds < 3600)); then
+    printf -v REPLY '%dm' $((seconds / 60))
+  elif ((seconds < 86400)); then
+    printf -v REPLY '%dh' $((seconds / 3600))
+  elif ((seconds < 604800)); then
+    printf -v REPLY '%dd' $((seconds / 86400))
+  elif ((seconds < 2629800)); then
+    printf -v REPLY '%dw' $((seconds / 604800))
+  elif ((seconds < 31557600)); then
+    printf -v REPLY '%dmo' $((seconds / 2629800))
   else
-    root="$path"
+    printf -v REPLY '%dy' $((seconds / 31557600))
   fi
+}
 
-  # Session paths are normally ~/repos/<org>/<repo>. Avoid a Git subprocess for
-  # every session so the fzf picker can render its session entries immediately.
-  if [[ $root != "$HOME"/repos/*/* && $root != "$HOME"/.dotfiles ]]; then
-    printf '%s\n' "$name"
+# org/repo:branch -> dim org, bold repo, mauve branch
+function format_label() {
+  local head="$1" branch="" org="" name
+  if [[ $head == *:* ]]; then
+    branch="${head#*:}"
+    head="${head%%:*}"
+  fi
+  if [[ $head == */* ]]; then
+    org="${head%/*}/"
+    name="${head##*/}"
+  else
+    name="$head"
+  fi
+  REPLY="${OVERLAY}${org}${TEXT}${BOLD}${name}${RESET}"
+  [[ -n $branch ]] && REPLY+="${MAUVE}:${branch}${RESET}"
+}
+
+function state_glyph() {
+  case "$1" in
+    waiting) REPLY="${RED}◆${RESET}" ;;
+    error) REPLY="${PEACH}▲${RESET}" ;;
+    done) REPLY="${YELLOW}●${RESET}" ;;
+    working) REPLY="${BLUE}${ICON_WORKING}${RESET}" ;;
+    *) REPLY=" " ;;
+  esac
+}
+
+function state_color() {
+  case "$1" in
+    waiting) REPLY="$RED" ;;
+    error) REPLY="$PEACH" ;;
+    done) REPLY="$YELLOW" ;;
+    working) REPLY="$BLUE" ;;
+    *) REPLY="$SUBTEXT" ;;
+  esac
+}
+
+function state_text() {
+  case "$1" in
+    waiting) REPLY="needs you" ;;
+    error) REPLY="failed" ;;
+    done) REPLY="done" ;;
+    working) REPLY="working" ;;
+    *) REPLY="" ;;
+  esac
+}
+
+function state_rank() {
+  case "$1" in
+    waiting) REPLY=4 ;;
+    error) REPLY=3 ;;
+    done) REPLY=2 ;;
+    working) REPLY=1 ;;
+    *) REPLY=0 ;;
+  esac
+}
+
+function needs_attention() {
+  [[ $1 == waiting || $1 == error || $1 == "done" ]]
+}
+
+# an oc-notify flag wins over the busy mark
+function agent_state() {
+  case "$1" in
+    waiting | error | done) REPLY="$1" ;;
+    *) if [[ $2 == 1 ]]; then REPLY="working"; else REPLY="idle"; fi ;;
+  esac
+}
+
+function clip_text() {
+  local text="${1//$'\t'/ }" width="$2"
+  ((${#text} > width)) && text="${text:0:$((width - 1))}…"
+  REPLY="$text"
+}
+
+# "needs you: Bash(terraform plan)", "working · Fix token refresh race"
+function agent_status() {
+  local state="$1" detail="$2" title="$3" color text extra sep=" · "
+  state_color "$state"
+  color="$REPLY"
+  case "$state" in
+    waiting | error)
+      state_text "$state"
+      text="$REPLY"
+      extra="$detail"
+      sep=": "
+      ;;
+    done | working)
+      state_text "$state"
+      text="$REPLY"
+      extra="$title"
+      ;;
+    *)
+      color="$OVERLAY"
+      text="idle"
+      extra="$title"
+      ;;
+  esac
+  clip_text "$extra" "$DETAIL_WIDTH_MAX"
+  extra="$REPLY"
+  REPLY="${color}${text}${RESET}"
+  [[ -n $extra ]] && REPLY+="${OVERLAY}${sep}${TEXT}${extra}${RESET}"
+}
+
+# short, colored agent status for a list row: "claude needs you"
+function status_label() {
+  local state="$1" app="$2" program="$3" text
+  state_text "$state"
+  text="$REPLY"
+  if [[ -z $text ]]; then
+    REPLY="${OVERLAY}${program}${RESET}"
     return
   fi
+  state_color "$state"
+  REPLY="${REPLY}${app:+$app }${text}${RESET}"
+}
 
-  parent="${root%/*}"
-  org="${parent##*/}"
+function section_header() {
+  local title="$1" count="$2" width="$3" text rule n
+  text="── ${title} · ${count} "
+  n=$((width - ${#text}))
+  ((n > 2)) || n=3
+  printf -v rule '%*s' "$n" ''
+  printf ' %s──%s %s%s%s %s· %s%s %s%s\t\t\theader\t\t\n' \
+    "$SURFACE" "$RESET" "$MAUVE" "$BOLD" "$title" "$RESET$OVERLAY" "$count" "$RESET" \
+    "$SURFACE${rule// /─}" "$RESET"
+}
+
+function dir_icon() {
+  if [[ $1 == */.worktrees/* ]]; then
+    REPLY="${MAUVE}${ICON_WORKTREE}${RESET}"
+  elif [[ -e $1/.git ]]; then
+    REPLY="${BLUE}${ICON_REPO}${RESET}"
+  else
+    REPLY="${OVERLAY}${ICON_FOLDER}${RESET}"
+  fi
+}
+
+# claude's native installer runs a binary named after its version, so tmux
+# reports 2.1.x rather than claude
+function program_name() {
+  local cmd="${1#-}"
+  case "$cmd" in
+    opencode | opencode2) REPLY="opencode" ;;
+    claude) REPLY="claude" ;;
+    *)
+      if [[ $cmd =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        REPLY="claude"
+      else
+        REPLY="$cmd"
+      fi
+      ;;
+  esac
+}
+
+function is_agent() {
+  program_name "$1"
+  [[ $REPLY == claude || $REPLY == opencode ]]
+}
+
+# --------------------------------------------------------------- git & dirs ---
+
+# branch name read straight from HEAD; avoids a git process per entry
+function git_branch() {
+  local dir="$1" gitdir ref
+  if [[ -d $dir/.git ]]; then
+    gitdir="$dir/.git"
+  elif [[ -f $dir/.git ]]; then
+    IFS= read -r gitdir <"$dir/.git" || return 1
+    gitdir="${gitdir#gitdir: }"
+    [[ $gitdir == /* ]] || gitdir="$dir/$gitdir"
+  else
+    return 1
+  fi
+  [[ -r $gitdir/HEAD ]] || return 1
+  IFS= read -r ref <"$gitdir/HEAD" || return 1
+  if [[ $ref == "ref: refs/heads/"* ]]; then
+    REPLY="${ref#ref: refs/heads/}"
+  else
+    REPLY="${ref:0:7}"
+  fi
+}
+
+# ~/repos/<org>/<repo> -> org/repo, worktrees -> org/repo:branch
+function label_for() {
+  local dir="${1%/}" root branch="" org repo name
+  root="$dir"
+  if [[ $dir == */.worktrees/* ]]; then
+    root="${dir%/.worktrees/*}"
+    if git_branch "$dir"; then branch="$REPLY"; else branch="${dir##*/}"; fi
+  fi
   repo="${root##*/}"
-  repo="${repo#.}"
-
-  [[ $root == "$HOME"/.dotfiles ]] && org="sgtoj"
-
-  if [[ $worktree -eq 1 ]]; then
-    branch="${path##*/}"
-    if [[ -r "$path/.git" ]]; then
-      IFS= read -r gitdir < "$path/.git" || gitdir=""
-      gitdir="${gitdir#gitdir: }"
-      [[ $gitdir == /* ]] || gitdir="$path/$gitdir"
-      if [[ -r "$gitdir/HEAD" ]]; then
-        IFS= read -r ref < "$gitdir/HEAD" || ref=""
-        [[ $ref == "ref: refs/heads/"* ]] && branch="${ref#ref: refs/heads/}"
-      fi
-    fi
-    printf '%s-%s | %s\n' "$org" "$repo" "$branch"
+  org="${root%/*}"
+  org="${org##*/}"
+  if [[ $root == "$HOME/.dotfiles" ]]; then
+    name="dotfiles"
+  elif [[ $root == "$HOME"/repos/*/* ]]; then
+    name="$org/$repo"
   else
-    printf '%s-%s\n' "$org" "$repo"
+    name="$repo"
+  fi
+  REPLY="${name}${branch:+:$branch}"
+}
+
+# a project session is labeled like its project; any other keeps its name
+function session_label() {
+  if [[ -n $2 ]] && project_root "$2"; then
+    label_for "$REPLY"
+  else
+    REPLY="$1"
   fi
 }
 
-# List existing sessions by their friendly label. --no-sort in exec_fzf retains
-# this session-first order even after a query narrows both sessions and paths.
-function list_sessions() {
-  local current="" name path label
-  local entries=()
+# the repo or worktree holding a path: ~/repos/<org>/<repo>[/.worktrees/<name>]
+function project_root() {
+  local path="${1%/}" root rel org rest repo worktree
+  case "$path" in
+    "$HOME/.dotfiles" | "$HOME"/.dotfiles/*)
+      root="$HOME/.dotfiles"
+      ;;
+    "$HOME"/repos/*/*)
+      rel="${path#"$HOME"/repos/}"
+      org="${rel%%/*}"
+      rest="${rel#*/}"
+      repo="${rest%%/*}"
+      root="$HOME/repos/$org/$repo"
+      ;;
+    *) return 1 ;;
+  esac
+  rest="${path#"$root"}"
+  if [[ $rest == /.worktrees/?* ]]; then
+    worktree="${rest#/.worktrees/}"
+    root+="/.worktrees/${worktree%%/*}"
+  fi
+  REPLY="$root"
+}
 
-  if [[ -n $TMUX ]]; then
-    current=$(tmux display-message -p '#S' 2>/dev/null)
+# an agent is labeled by the project it runs in, else by its session
+function agent_label() {
+  local cwd="$1" session="$2" session_path="$3"
+  if project_root "$cwd"; then
+    label_for "$REPLY"
+  else
+    session_label "$session" "$session_path"
+  fi
+}
+
+# the newest record of a type in a claude transcript, as one JSON line
+function transcript_record() {
+  local file="$1" pattern="$2"
+  [[ -n $file && -r $file ]] || return 1
+  REPLY=$(grep -E "\"type\":\"($pattern)\"" "$file" 2>/dev/null | tail -n 1)
+  [[ -n $REPLY ]]
+}
+
+function agent_title() {
+  transcript_record "$1" "custom-title|ai-title" || return 1
+  REPLY=$(jq -r '.customTitle // .aiTitle // empty' <<<"$REPLY" 2>/dev/null)
+  [[ -n $REPLY ]]
+}
+
+function last_prompt() {
+  transcript_record "$1" "last-prompt" || return 1
+  REPLY=$(jq -r '.lastPrompt // empty' <<<"$REPLY" 2>/dev/null)
+  [[ -n $REPLY ]]
+}
+
+# tmux session names can't contain '.' or ':'
+function session_name_for() {
+  local dir="$1" parent base main org repo name
+  parent="${dir%/*}"
+  parent="${parent##*/}"
+  base="${dir##*/}"
+  base="${base//./_}"
+  name="${parent}-${base}"
+
+  if [[ $dir == */.worktrees/* ]]; then
+    main="${dir%/.worktrees/*}"
+    org="${main%/*}"
+    org="${org##*/}"
+    repo="${main##*/}"
+    repo="${repo//./_}"
+    name="${org}-${repo}-${base}"
   fi
 
-  while IFS=$'\t' read -r name path; do
-    [[ $name == "$current" ]] && continue
-    label=$(session_label "$name" "$path")
-    entries+=("$label"$'\t'"$name")
-  done < <(tmux list-sessions -F $'#{session_name}\t#{session_path}' 2>/dev/null)
+  if [[ $base == _dotfiles ]]; then
+    name="dotfiles"
+  elif [[ $dir == */.worktrees/* && ${main##*/} == .dotfiles ]]; then
+    name="dotfiles-${base}"
+  elif [[ $base == _github ]]; then
+    name="${parent}-github"
+  fi
+  REPLY="$name"
+}
 
-  ((${#entries[@]})) || return
-  printf '%s\n' "${entries[@]}" | LC_ALL=C sort -f |
-    while IFS=$'\t' read -r label name; do
-      printf '%s%s\t%s\n' "$SESSION_PREFIX" "$label" "$name"
+function list_search_directories() {
+  local root repo worktree
+  while IFS= read -r root; do
+    [[ -d $root ]] || continue
+    for repo in "$root"/* "$root"/.[!.]*; do
+      [[ -d $repo && ${repo##*/} != .worktrees ]] || continue
+      printf '%s\n' "$repo"
+      for worktree in "$repo"/.worktrees/*; do
+        [[ -d $worktree ]] && printf '%s\n' "$worktree"
+      done
     done
+  done < <(list_search_roots)
+  printf '%s\n' "$HOME/.dotfiles"
+  for worktree in "$HOME"/.dotfiles/.worktrees/*; do
+    [[ -d $worktree ]] && printf '%s\n' "$worktree"
+  done
 }
 
-# Build project directories sorted by recency: newest Git activity
-# (FETCH_HEAD/HEAD mtime) or directory mtime as fallback.
+# newest git activity (FETCH_HEAD/HEAD mtime), else the directory's own mtime
+function directory_timestamp() {
+  local dir="$1" file
+  local -a candidates
+  if [[ $dir == */.worktrees/* ]]; then
+    candidates=("${dir%/.worktrees/*}/.git/worktrees/${dir##*/}/HEAD")
+  else
+    candidates=("$dir/.git/FETCH_HEAD" "$dir/.git/HEAD")
+  fi
+  for file in "${candidates[@]}" "$dir"; do
+    if [[ -e $file ]]; then
+      "${STAT_MTIME[@]}" "$file" 2>/dev/null && return
+    fi
+  done
+  printf '0\n'
+}
+
 function build_directory_cache() {
-  local dir ts candidates
+  local dir
   while IFS= read -r dir; do
-    ts=""
-    if [[ $dir == */.worktrees/* ]]; then
-      # worktrees have a .git file; activity lives in the parent repo's
-      # .git/worktrees/<name>/ metadata
-      candidates=("${dir%/.worktrees/*}/.git/worktrees/$(basename "$dir")/HEAD")
-    else
-      candidates=("$dir/.git/FETCH_HEAD" "$dir/.git/HEAD")
-    fi
-    for f in "${candidates[@]}"; do
-      if [[ -f $f ]]; then
-        ts=$(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null)
-        break
-      fi
-    done
-    if [[ -z $ts ]]; then
-      ts=$(stat -f '%m' "$dir" 2>/dev/null || stat -c '%Y' "$dir" 2>/dev/null)
-    fi
-    printf '%s %s\n' "${ts:-0}" "$dir"
-  done < <(list_search_directories) | sort -rn | cut -d' ' -f2-
-}
-
-function list_cached_directories() {
-  [[ -r $DIRECTORY_CACHE ]] || return
-  while IFS= read -r dir; do
-    [[ -n $dir && -d $dir ]] && printf '%s\n' "$dir"
-  done < "$DIRECTORY_CACHE"
-}
-
-function list_candidates() {
-  list_sessions
-  list_cached_directories
-}
-
-function list_directories_now() {
-  build_directory_cache
+    printf '%s\t%s\n' "$(directory_timestamp "$dir")" "$dir"
+  done < <(list_search_directories) | sort -t $'\t' -k1,1nr
 }
 
 function refresh_directories() {
   local temp
-
   mkdir -p "$CACHE_DIR"
-  temp=$(mktemp "$CACHE_DIR/directories.XXXXXX")
-  trap 'rm -f "$temp"' RETURN
-  build_directory_cache > "$temp"
+  temp=$(mktemp "$CACHE_DIR/projects.XXXXXX") || return
+  build_directory_cache >"$temp"
   mv "$temp" "$DIRECTORY_CACHE"
-  trap - RETURN
 }
 
 function reload_candidates() {
-  local socket="$1" attempt
-  local auth=()
-
+  local socket="$1" picker_dir="$2" attempt
+  local -a auth=()
   for ((attempt = 0; attempt < 20; attempt++)); do
     [[ -S $socket ]] && break
     sleep 0.05
   done
   [[ -S $socket ]] || return
   [[ -n ${FZF_API_KEY:-} ]] && auth=(-H "x-api-key: $FZF_API_KEY")
-  curl --unix-socket "$socket" --fail --silent --show-error --max-time 1 --request POST "${auth[@]}" \
-    --data "reload($SCRIPT_PATH --candidates)" http >/dev/null 2>&1 || true
+  curl --unix-socket "$socket" --fail --silent --max-time 1 --request POST ${auth[@]+"${auth[@]}"} \
+    --data "reload($SELF --candidates $picker_dir)" http >/dev/null 2>&1 || true
 }
 
 function refresh_in_background() {
-  local socket="$1"
   sleep "$REFRESH_DELAY"
   refresh_directories
-  reload_candidates "$socket"
+  reload_candidates "$1" "$2"
 }
 
-# render the fzf preview for a picker entry (session or directory)
-function render_preview() {
-  local entry="$1"
+# ----------------------------------------------------------------- sessions ---
 
-  if [[ "$entry" == "$SESSION_PREFIX"* ]]; then
-    local session_entry="${entry#"$SESSION_PREFIX"}" display session pane
-    display="${session_entry%%$'\t'*}"
-    session="${session_entry#*$'\t'}"
-    [[ $session == "$session_entry" ]] && session="$display"
-    pane=$(tmux display-message -p -t "$session" \
-      'active pane: #{window_index}.#{pane_index} #{pane_current_command} - #{pane_current_path}' 2>/dev/null || true)
-    printf 'tmux session: %s%s\n' "$display" "${pane:+ | $pane}"
-    echo
-    tmux capture-pane -ep -t "$session" -p 2>/dev/null
-    return
-  fi
+# rank, label, name, path, windows, state, agent, program; most urgent first
+function list_sessions() {
+  local rank name path windows state app program
+  tmux list-panes -a -F "$PANE_FORMAT" 2>/dev/null | awk "$AWK_SESSIONS" |
+    while IFS="$US" read -r rank name path windows state app program; do
+      [[ -n $name ]] || continue
+      session_label "$name" "$path"
+      printf '%s\n' "${rank}${US}${REPLY}${US}${name}${US}${path}${US}${windows}${US}${state}${US}${app}${US}${program}"
+    done | LC_ALL=C sort -t "$US" -k1,1nr -k2,2f
+}
 
-  if [[ ! -d $entry ]]; then
-    return
-  fi
-
-  if [[ -e "$entry/.git" ]]; then
-    local branch dirty
-    branch=$(git -C "$entry" branch --show-current 2>/dev/null)
-    dirty=$(git -C "$entry" status --porcelain 2>/dev/null | head -1)
-    echo "branch: ${branch:-detached}${dirty:+ (dirty)}"
-    echo
-    git -C "$entry" log --oneline --no-decorate -5 2>/dev/null
-    echo
-  fi
-
-  local readme
-  for readme in "$entry/README.md" "$entry/readme.md" "$entry/README"; do
-    if [[ -f $readme ]]; then
-      if command -v bat &>/dev/null; then
-        bat --style=plain --color=always --line-range :40 "$readme" 2>/dev/null
-      else
-        head -40 "$readme"
-      fi
+function session_for_dir() {
+  local name path
+  while IFS="$US" read -r name path; do
+    if [[ $path == "$1" ]]; then
+      printf '%s\n' "$name"
       return
     fi
-  done
-
-  if ! [[ -e "$entry/.git" ]]; then
-    ls -1 "$entry" | head -40
-  fi
+  done < <(tmux list-sessions -F "#{session_name}${US}#{session_path}" 2>/dev/null)
+  return 1
 }
 
-create_session() {
-  local name="$1" dir="$2"
+# the session-closed hook in .tmux.conf skips its session tree and clears the
+# flag, so closing another session from here leaves the screen alone
+function close_session() {
+  tmux has-session -t "=$1" 2>/dev/null || return 0
+  tmux set-option -g @sessionizer_closing 1 \; kill-session -t "=$1" 2>/dev/null
+  [[ -x $NOTIFY ]] && "$NOTIFY" refresh >/dev/null 2>&1
+  return 0
+}
 
+# close sessions whose directory is gone (a worktree removed outside `wt rm`)
+function reap_dead_sessions() {
+  local current="$1" name path
+  while IFS="$US" read -r name path; do
+    [[ $name != "$current" && -n $path && ! -d $path ]] && close_session "$name"
+  done < <(tmux list-sessions -F "#{session_name}${US}#{session_path}" 2>/dev/null)
+}
+
+function create_session() {
+  local name="$1" dir="$2"
   tmux new-session -ds "$name" -c "$dir" "zsh"
   tmux send-keys -t "$name" "nvim-pde" C-m
 }
 
-# ------------------------------------------------------------------- script ---
+function switch_to() {
+  if [[ -n ${TMUX:-} ]]; then
+    tmux switch-client -t "=$1"
+  else
+    tmux attach-session -t "=$1"
+  fi
+}
 
-# internal helpers invoked by fzf
-if [[ "$1" == "--candidates" ]]; then
-  list_candidates
-  exit 0
-fi
+function open_session() {
+  local dir name
+  dir=$(cd -- "$1" 2>/dev/null && pwd) || die "not a directory: $1"
+  if ! name=$(session_for_dir "$dir"); then
+    session_name_for "$dir"
+    name="$REPLY"
+    tmux has-session -t "=$name" 2>/dev/null || create_session "$name" "$dir"
+  fi
+  switch_to "$name"
+}
 
-if [[ "$1" == "--refresh-directories" ]]; then
-  refresh_directories
-  exit 0
-fi
+function open_window() {
+  local dir="$1" current
+  current=$(current_session)
+  if [[ -z $current ]]; then
+    open_session "$dir"
+    return
+  fi
+  label_for "$dir"
+  tmux new-window -t "=$current:" -c "$dir" -n "${REPLY##*/}"
+}
 
-if [[ "$1" == "--preview" ]]; then
-  render_preview "$2"
-  exit 0
-fi
+# oc-notify's jump also clears the flag and focuses the alerted opencode tab
+function jump_to_pane() {
+  local pane="$1" session
+  if [[ -n ${TMUX:-} && -x $NOTIFY ]]; then
+    "$NOTIFY" jump-to "$pane"
+    return
+  fi
+  session=$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null)
+  [[ -n $session ]] || return 0
+  tmux select-window -t "$pane" 2>/dev/null
+  tmux select-pane -t "$pane" 2>/dev/null
+  switch_to "$session"
+}
 
-if [[ $# -eq 1 ]]; then
-  selected=$1
-else
-  reap_dead_sessions
-  fzf_path=$(get_fzf_path)
-  if fzf_supports_dynamic_reload "$fzf_path"; then
-    # A cache is absent on fresh machines (including a new WSL install). Build
-    # it before opening fzf; otherwise the picker would exit with no entries.
+# the last pane closes its session, which goes through close_session so the
+# session tree stays shut
+function close_agent() {
+  local pane="$1" info session windows panes
+  info=$(tmux display-message -p -t "$pane" "#{session_name}${US}#{session_windows}${US}#{window_panes}" 2>/dev/null)
+  [[ -n $info ]] || return 0
+  IFS="$US" read -r session windows panes <<<"$info"
+  if [[ $windows == 1 && $panes == 1 ]]; then
+    close_session "$session"
+    return
+  fi
+  tmux kill-pane -t "$pane" 2>/dev/null
+  [[ -x $NOTIFY ]] && "$NOTIFY" refresh >/dev/null 2>&1
+  return 0
+}
+
+# ------------------------------------------------------------------- picker ---
+
+function current_pane() {
+  [[ -n ${TMUX:-} ]] || return 0
+  tmux display-message -p '#{pane_id}' 2>/dev/null
+}
+
+function picker_view() {
+  REPLY="sessions"
+  [[ -n ${1:-} && -r $1/view ]] && REPLY=$(<"$1/view")
+}
+
+function picker_mode() {
+  REPLY="all"
+  [[ -n ${1:-} && -r $1/mode ]] && REPLY=$(<"$1/mode")
+}
+
+function view_footer() {
+  if [[ $1 == agents ]]; then REPLY="$FOOTER_AGENTS"; else REPLY="$FOOTER_SESSIONS"; fi
+}
+
+function view_label() {
+  case "$1:$2" in
+    agents:attention) REPLY=" Agents · Needs Attention " ;;
+    agents:*) REPLY=" Agents " ;;
+    *:attention) REPLY=" Needs Attention " ;;
+    *) REPLY=" Sessions & Projects " ;;
+  esac
+}
+
+function view_ghost() {
+  if [[ $1 == agents ]]; then REPLY="agent or project"; else REPLY="project, worktree, or session"; fi
+}
+
+# one row per line, tab separated:
+#   marker, name (the only searched field), details, kind, target, label
+# fzf shows the first three (tabs drawn as one space via --tabstop=1); kind is
+# session, dir, agent, or header (section rows, which never match a query)
+function list_candidates() {
+  picker_view "${1:-}"
+  if [[ $REPLY == agents ]]; then
+    list_agent_rows "${1:-}"
+  else
+    list_session_rows "${1:-}"
+  fi
+}
+
+function list_session_rows() {
+  local picker_dir="${1:-}" mode="all" current="" rank label name path windows state app program
+  local dir branch ts row details plural display
+  local label_width=0 branch_width=0 project_width=0 rule_width
+  local open_dirs=$'\n' open_labels=$'\n'
+  local -a session_rows=() dir_rows=()
+
+  if [[ -n $picker_dir ]]; then
+    picker_mode "$picker_dir"
+    mode="$REPLY"
+    [[ -r $picker_dir/current ]] && current=$(<"$picker_dir/current")
+  else
+    current=$(current_session)
+  fi
+
+  while IFS="$US" read -r rank label name path windows state app program; do
+    [[ -n $name ]] || continue
+    open_dirs+="$path"$'\n'
+    open_labels+="$label"$'\n'
+    [[ $name == "$current" ]] && continue
+    [[ $mode == attention ]] && ! needs_attention "$state" && continue
+    branch=""
+    [[ $label != *:* && -n $path ]] && git_branch "$path" && branch="$REPLY"
+    ((${#label} > label_width)) && label_width=${#label}
+    ((${#branch} > branch_width)) && branch_width=${#branch}
+    session_rows+=("${name}${US}${label}${US}${state}${US}${app}${US}${windows}${US}${program}${US}${branch}")
+  done < <(list_sessions)
+
+  if [[ $mode != attention && -r $DIRECTORY_CACHE ]]; then
+    while IFS=$'\t' read -r ts dir; do
+      [[ -n $dir && -d $dir ]] || continue
+      [[ $open_dirs == *$'\n'"$dir"$'\n'* ]] && continue
+      label_for "$dir"
+      label="$REPLY"
+      [[ $open_labels == *$'\n'"$label"$'\n'* ]] && continue
+      ((${#label} > project_width)) && project_width=${#label}
+      dir_rows+=("${ts}${US}${dir}${US}${label}")
+    done <"$DIRECTORY_CACHE"
+  fi
+
+  ((label_width > LABEL_WIDTH_MAX)) && label_width=$LABEL_WIDTH_MAX
+  ((branch_width > 20)) && branch_width=20
+  ((project_width > LABEL_WIDTH_MAX + 8)) && project_width=$((LABEL_WIDTH_MAX + 8))
+  rule_width=$((label_width + branch_width + 32))
+  ((project_width + 8 > rule_width)) && rule_width=$((project_width + 8))
+  ((rule_width > 72)) && rule_width=72
+
+  if ((${#session_rows[@]})); then
+    [[ $mode == attention ]] || section_header "Sessions" "${#session_rows[@]}" "$rule_width"
+    for row in "${session_rows[@]}"; do
+      IFS="$US" read -r name label state app windows program branch <<<"$row"
+      state_glyph "$state"
+      printf ' %s %s%s%s\t' "$REPLY" "$TEAL" "$ICON_SESSION" "$RESET"
+
+      format_label "$label"
+      display="$REPLY"
+      pad "$label" "$label_width"
+      display+="$REPLY"
+      if ((branch_width)); then
+        pad "$branch" "$branch_width"
+        display+="  ${MAUVE}${branch}${RESET}${REPLY}"
+      fi
+
+      plural="s"
+      ((windows == 1)) && plural=" "
+      details="${OVERLAY}${windows} window${plural}${RESET}  "
+      status_label "$state" "$app" "$program"
+      details+="$REPLY"
+
+      printf '%s\t %s\tsession\t%s\t%s\n' "$display" "$details" "$name" "$label"
+    done
+  fi
+
+  if ((${#dir_rows[@]})); then
+    section_header "Projects" "${#dir_rows[@]}" "$rule_width"
+    for row in "${dir_rows[@]}"; do
+      IFS="$US" read -r ts dir label <<<"$row"
+      dir_icon "$dir"
+      printf '   %s\t' "$REPLY"
+      format_label "$label"
+      display="$REPLY"
+      pad "$label" "$project_width"
+      display+="$REPLY"
+      format_age "$ts"
+      printf '%s\t %s%3s%s\tdir\t%s\t%s\n' "$display" "$OVERLAY" "$REPLY" "$RESET" "$dir" "$label"
+    done
+  fi
+}
+
+# every claude and opencode pane: most urgent first, then most recent change
+function list_agent_rows() {
+  local picker_dir="${1:-}" mode="all" current="" pane session session_path window index cmd cwd
+  local state busy since detail transcript agent label title rank display age
+  local agent_width=0 label_width=0 rule_width
+  local -a rows=()
+
+  if [[ -n $picker_dir ]]; then
+    picker_mode "$picker_dir"
+    mode="$REPLY"
+    [[ -r $picker_dir/pane ]] && current=$(<"$picker_dir/pane")
+  else
+    current=$(current_pane)
+  fi
+
+  while IFS="$US" read -r pane session session_path window index cmd cwd state busy since detail transcript; do
+    [[ -n $pane && $pane != "$current" ]] || continue
+    is_agent "$cmd" || continue
+    agent="$REPLY"
+    agent_state "$state" "$busy"
+    state="$REPLY"
+    [[ $mode == attention ]] && ! needs_attention "$state" && continue
+    state_rank "$state"
+    rank="$REPLY"
+    agent_label "$cwd" "$session" "$session_path"
+    label="$REPLY"
+    title=""
+    agent_title "$transcript" && title="$REPLY"
+    [[ $since =~ ^[0-9]+$ ]] || since=0
+    ((${#agent} > agent_width)) && agent_width=${#agent}
+    ((${#label} > label_width)) && label_width=${#label}
+    rows+=("${rank}${US}${since}${US}${pane}${US}${agent}${US}${label}${US}${state}${US}${detail//$US/ }${US}${title//$US/ }")
+  done < <(tmux list-panes -a -F "$AGENT_FORMAT" 2>/dev/null)
+
+  ((${#rows[@]})) || return 0
+  ((label_width > LABEL_WIDTH_MAX)) && label_width=$LABEL_WIDTH_MAX
+  rule_width=$((agent_width + label_width + 32))
+  ((rule_width > 72)) && rule_width=72
+
+  [[ $mode == attention ]] || section_header "Agents" "${#rows[@]}" "$rule_width"
+  printf '%s\n' "${rows[@]}" | LC_ALL=C sort -t "$US" -k1,1nr -k2,2nr |
+    while IFS="$US" read -r rank since pane agent label state detail title; do
+      state_glyph "$state"
+      printf ' %s %s%s%s\t' "$REPLY" "$MAUVE" "$ICON_AGENT" "$RESET"
+      pad "$agent" "$agent_width"
+      display="${TEXT}${agent}${RESET}${REPLY}  "
+      format_label "$label"
+      display+="$REPLY"
+      pad "$label" "$label_width"
+      display+="$REPLY"
+      age=""
+      ((since > 0)) && format_age "$since" && age="$REPLY"
+      agent_status "$state" "$detail" "$title"
+      printf '%s\t %s%3s%s  %s\tagent\t%s\t%s in %s\n' \
+        "$display" "$OVERLAY" "$age" "$RESET" "$REPLY" "$pane" "$agent" "$label"
+    done
+}
+
+function close_request() {
+  local picker_dir="$1" kind="$2" target="$3" label="$4" pending="" pending_at=0 picker_q
+  case "$kind" in
+    session | agent) ;;
+    *)
+      printf 'change-footer:%s' "ctrl-x closes sessions and agents"
+      return
+      ;;
+  esac
+  [[ -r $picker_dir/close ]] && IFS=$'\t' read -r pending pending_at <"$picker_dir/close"
+  if [[ $pending == "$target" ]] && ((NOW - pending_at <= CLOSE_CONFIRM_SECONDS)); then
+    rm -f "$picker_dir/close"
+    if [[ $kind == agent ]]; then
+      close_agent "$target"
+    else
+      close_session "$target"
+    fi
+    printf -v picker_q '%q' "$picker_dir"
+    picker_view "$picker_dir"
+    view_footer "$REPLY"
+    printf 'reload-sync(%s --candidates %s)+change-footer:%s' "$SELF" "$picker_q" "$REPLY"
+  else
+    printf '%s\t%s\n' "$target" "$NOW" >"$picker_dir/close"
+    printf 'change-footer:%s' "press ctrl-x again to close $label"
+  fi
+}
+
+function toggle_attention() {
+  local picker_dir="$1" view mode picker_q
+  picker_view "$picker_dir"
+  view="$REPLY"
+  picker_mode "$picker_dir"
+  if [[ $REPLY == attention ]]; then mode="all"; else mode="attention"; fi
+  printf '%s\n' "$mode" >"$picker_dir/mode"
+  printf -v picker_q '%q' "$picker_dir"
+  view_label "$view" "$mode"
+  printf 'reload-sync(%s --candidates %s)+change-list-label:%s' "$SELF" "$picker_q" "$REPLY"
+}
+
+function toggle_view() {
+  local picker_dir="$1" view label ghost picker_q
+  picker_view "$picker_dir"
+  if [[ $REPLY == agents ]]; then view="sessions"; else view="agents"; fi
+  printf '%s\n' "$view" >"$picker_dir/view"
+  rm -f "$picker_dir/close"
+  printf -v picker_q '%q' "$picker_dir"
+  picker_mode "$picker_dir"
+  view_label "$view" "$REPLY"
+  label="$REPLY"
+  view_ghost "$view"
+  ghost="$REPLY"
+  view_footer "$view"
+  printf 'reload-sync(%s --candidates %s)+change-list-label(%s)+change-ghost(%s)+change-footer:%s' \
+    "$SELF" "$picker_q" "$label" "$ghost" "$REPLY"
+}
+
+function footer_for() {
+  picker_view "$1"
+  view_footer "$REPLY"
+  printf '%s' "$REPLY"
+}
+
+# after every result update: the best match while typing, else the first row
+# under the section header (the attention view has no headers)
+function cursor_home() {
+  local picker_dir="$1" mode="all"
+  [[ -r $picker_dir/mode ]] && mode=$(<"$picker_dir/mode")
+  if [[ -n ${FZF_QUERY:-} || $mode == attention ]]; then
+    printf 'first'
+  else
+    printf 'pos(2)'
+  fi
+}
+
+function run_picker() {
+  local view="${1:-sessions}" fzf_path help full=0 picker_dir picker_q current socket label ghost footer
+  local -a args
+  fzf_path=$(get_fzf_path) || return 2
+  help=$("$fzf_path" --help 2>&1)
+  [[ $help == *--footer* && $help == *--listen=SOCKET_PATH* ]] && full=1
+
+  picker_dir=$(mktemp -d "${TMPDIR:-/tmp}/tmux-sessionizer.XXXXXX") || return 2
+  printf -v picker_q '%q' "$picker_dir"
+  # shellcheck disable=SC2064
+  trap "rm -rf $picker_q" EXIT
+  current=$(current_session)
+  printf '%s\n' "$current" >"$picker_dir/current"
+  current_pane >"$picker_dir/pane"
+  printf '%s\n' "$view" >"$picker_dir/view"
+
+  tmux set-option -gu @sessionizer_closing 2>/dev/null
+  reap_dead_sessions "$current"
+  if ((full)); then
     [[ -s $DIRECTORY_CACHE ]] || refresh_directories
-    candidate_file=$(mktemp "${TMPDIR:-/tmp}/tmux-sessionizer.XXXXXX")
-    socket="${TMPDIR:-/tmp}/tmux-sessionizer.$$.sock"
-    trap 'rm -f "$candidate_file" "$socket"' EXIT
-    list_candidates > "$candidate_file"
-    [[ -s $candidate_file ]] || exit 0
+  else
+    refresh_directories
+  fi
+  list_candidates "$picker_dir" >"$picker_dir/candidates"
+  [[ -s $picker_dir/candidates ]] || return 1
+
+  args=(
+    --ansi
+    --no-multi
+    --sync
+    --delimiter=$'\t'
+    --with-nth=1..3
+    --nth=2
+    --tabstop=1
+    --expect=alt-enter
+    --layout=reverse
+    --prompt='❯ '
+    --pointer='▌'
+    --preview="$SELF --preview {4} {5}"
+    --bind="ctrl-r:reload($SELF --candidates $picker_q)"
+    --bind='ctrl-/:toggle-preview'
+  )
+  [[ -n ${TMUX:-} && $help == *--tmux* ]] && args+=("--tmux=center,90%,80%")
+
+  if ((full)); then
+    view_label "$view" all
+    label="$REPLY"
+    view_ghost "$view"
+    ghost="$REPLY"
+    view_footer "$view"
+    footer="$REPLY"
+    args+=(
+      --ellipsis='…'
+      --style=full:rounded
+      --info=inline-right
+      --ghost="$ghost"
+      --list-label="$label"
+      --input-label=' Open '
+      --preview-label=' Preview '
+      --footer="$footer"
+      --color='bg:-1,bg+:#313244,fg:#cdd6f4,fg+:#cdd6f4,hl:#f38ba8,hl+:#f38ba8'
+      --color='info:#6c7086,prompt:#cba6f7,pointer:#f5e0dc,spinner:#f5e0dc,marker:#b4befe'
+      --color='border:#45475a,label:#cdd6f4,list-label:#cba6f7,input-label:#89b4fa'
+      --color='preview-label:#f9e2af,footer:#6c7086,ghost:#585b70,selected-bg:#45475a'
+      --preview-window='right,55%,<120(down,55%)'
+      --bind="result:transform:$SELF --home $picker_q"
+      --bind="focus:transform-footer:$SELF --footer $picker_q"
+      --bind="tab:transform:$SELF --toggle-view $picker_q"
+      --bind="ctrl-x:transform:$SELF --close-request $picker_q {4} {5} {6}"
+      --bind="ctrl-a:transform:$SELF --toggle-attention $picker_q"
+    )
+    socket="$picker_dir/fzf.sock"
+    args+=("--listen=$socket")
     (
       trap - EXIT
-      refresh_in_background "$socket"
-    ) &
-    selected=$(exec_fzf "$socket" < "$candidate_file") || exit 0
+      refresh_in_background "$socket" "$picker_q"
+    ) >/dev/null 2>&1 &
+  elif [[ $view == agents ]]; then
+    args+=(--header="$PLAIN_HEADER_AGENTS" --preview-window='right,55%')
   else
-    # Older fzf versions cannot reload from a Unix socket. Match the original
-    # behaviour by calculating the directory order before showing the picker.
-    selected=$(
-      {
-        list_sessions
-        list_directories_now
-      } | exec_fzf
-    ) || exit 0
+    args+=(--header="$PLAIN_HEADER_SESSIONS" --preview-window='right,55%')
   fi
-fi
 
-if [[ -z $selected ]]; then
-  exit 0
-fi
+  "$fzf_path" "${args[@]}" <"$picker_dir/candidates"
+}
 
-# existing session selected: switch/attach directly
-if [[ "$selected" == "$SESSION_PREFIX"* ]]; then
-  session_entry="${selected#"$SESSION_PREFIX"}"
-  session="${session_entry#*$'\t'}"
-  [[ $session == "$session_entry" ]] && session="$session_entry"
-  if [[ -z $TMUX ]]; then
-    tmux attach-session -t "$session"
+function pick() {
+  local output status key line kind target
+  output=$(run_picker "${1:-sessions}")
+  status=$?
+  case "$status" in
+    0) ;;
+    1 | 130) return 0 ;;
+    *) return "$status" ;;
+  esac
+  key=$(sed -n 1p <<<"$output")
+  line=$(sed -n 2p <<<"$output")
+  [[ -n $line ]] || return 0
+  kind=$(cut -f4 <<<"$line")
+  target=$(cut -f5 <<<"$line")
+  case "$kind" in
+    session) switch_to "$target" ;;
+    agent) jump_to_pane "$target" ;;
+    dir)
+      if [[ $key == alt-enter ]]; then
+        open_window "$target"
+      else
+        open_session "$target"
+      fi
+      ;;
+  esac
+}
+
+# ------------------------------------------------------------------ preview ---
+
+function rule() {
+  local line
+  printf -v line '%*s' "${1:-40}" ''
+  printf '%s%s%s\n' "$OVERLAY" "${line// /─}" "$RESET"
+}
+
+function trim_trailing_blank_lines() {
+  awk '{ line[NR] = $0; s = $0; gsub(/\033\[[0-9;]*m/, "", s); if (s ~ /[^ \t]/) last = NR }
+    END { for (i = 1; i <= last; i++) print line[i] }'
+}
+
+function preview_session() {
+  local name="$1" path label columns lines used focus="" previous=""
+  local index active pane_active pane state cmd cwd tab marker program
+  columns=${FZF_PREVIEW_COLUMNS:-80}
+  lines=${FZF_PREVIEW_LINES:-40}
+
+  path=$(tmux display-message -p -t "=$name:" '#{session_path}' 2>/dev/null)
+  [[ -n $path ]] || return 0
+  session_label "$name" "$path"
+  label="$REPLY"
+
+  format_label "$label"
+  printf '%s%s%s %s' "$TEAL" "$ICON_SESSION" "$RESET" "$REPLY"
+  if [[ $label != *:* && -n $path ]] && git_branch "$path"; then
+    printf '   %s%s %s%s' "$MAUVE" "$ICON_BRANCH" "$REPLY" "$RESET"
+  fi
+  printf '\n'
+  tildify "$path"
+  printf '%s%s%s\n\n' "$OVERLAY" "$REPLY" "$RESET"
+  used=3
+
+  while IFS="$US" read -r index active pane_active pane state cmd cwd; do
+    [[ -n $pane ]] || continue
+    tab="   "
+    if [[ $index != "$previous" ]]; then
+      if [[ $active == 1 ]]; then
+        printf -v tab '%s%s%2s%s ' "$BLUE" "$BOLD" "$index" "$RESET"
+      else
+        printf -v tab '%s%2s%s ' "$OVERLAY" "$index" "$RESET"
+      fi
+      previous="$index"
+    fi
+    marker="  "
+    if [[ $active == 1 && $pane_active == 1 ]]; then
+      marker="${BLUE}▸${RESET} "
+      focus="$pane"
+    fi
+    is_agent "$cmd" || state=""
+    program_name "$cmd"
+    program="$REPLY"
+    state_glyph "$state"
+    printf '%s%s%s %s%-10s%s ' "$tab" "$marker" "$REPLY" "$TEXT" "${program:-?}" "$RESET"
+    if [[ -n $state ]]; then
+      state_color "$state"
+      printf '%s%s: ' "$REPLY" "$program"
+      state_text "$state"
+      printf '%s%s' "$REPLY" "$RESET"
+    else
+      tildify "$cwd"
+      printf '%s%s%s' "$OVERLAY" "$REPLY" "$RESET"
+    fi
+    printf '\n'
+    used=$((used + 1))
+  done < <(tmux list-panes -s -t "=$name" \
+    -F "#{window_index}${US}#{window_active}${US}#{pane_active}${US}#{pane_id}${US}#{@oc_state}${US}#{pane_current_command}${US}#{pane_current_path}" 2>/dev/null)
+
+  [[ -n $focus ]] || return 0
+  rule "$columns"
+  used=$((used + 1))
+  ((lines - used > 2)) || return 0
+  tmux capture-pane -ep -t "$focus" 2>/dev/null | trim_trailing_blank_lines | tail -n "$((lines - used))"
+  printf '%s' "$RESET"
+}
+
+function preview_directory() {
+  local dir="$1" branch changes counts ahead behind worktree readme
+  [[ -d $dir ]] || return 0
+
+  dir_icon "$dir"
+  printf '%s  ' "$REPLY"
+  label_for "$dir"
+  format_label "$REPLY"
+  printf '%s' "$REPLY"
+
+  if git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+    branch=$(git -C "$dir" branch --show-current 2>/dev/null)
+    printf '   %s%s %s%s' "$MAUVE" "$ICON_BRANCH" "${branch:-detached}" "$RESET"
+    changes=$(git -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+    ((changes > 0)) && printf '  %s● %s changed%s' "$YELLOW" "$changes" "$RESET"
+    if counts=$(git -C "$dir" rev-list --left-right --count '@{upstream}...HEAD' 2>/dev/null); then
+      read -r behind ahead <<<"$counts"
+      ((ahead > 0)) && printf '  %s↑%s%s' "$GREEN" "$ahead" "$RESET"
+      ((behind > 0)) && printf '  %s↓%s%s' "$RED" "$behind" "$RESET"
+    fi
+    printf '\n'
+    tildify "$dir"
+    printf '%s%s' "$OVERLAY" "$REPLY"
+    format_age "$(directory_timestamp "$dir")"
+    printf ' · active %s ago%s\n\n' "$REPLY" "$RESET"
+    git -C "$dir" log --color=always --no-decorate -8 \
+      --format='%C(#f9e2af)%h%C(reset)  %C(#cdd6f4)%s%C(reset) %C(#6c7086)%cr%C(reset)' 2>/dev/null
+
+    if [[ $dir != */.worktrees/* ]]; then
+      local printed=0
+      for worktree in "$dir"/.worktrees/*; do
+        [[ -d $worktree ]] || continue
+        ((printed++)) || printf '\n%sworktrees%s\n' "$OVERLAY" "$RESET"
+        if git_branch "$worktree"; then :; else REPLY="${worktree##*/}"; fi
+        printf '  %s%s%s %s\n' "$MAUVE" "$ICON_WORKTREE" "$RESET" "$REPLY"
+      done
+    fi
   else
-    tmux switch-client -t "$session"
+    printf '\n'
+    tildify "$dir"
+    printf '%s%s%s\n' "$OVERLAY" "$REPLY" "$RESET"
   fi
-  exit 0
-fi
 
-# generate session name
-parent_name=$(basename "$(dirname "$selected")")
-base_name=$(basename "$selected" | tr . _)
-selected_name="${parent_name}-${base_name}"
+  for readme in "$dir/README.md" "$dir/readme.md" "$dir/README"; do
+    [[ -f $readme ]] || continue
+    printf '\n'
+    bat --style=plain --color=always --paging=never --line-range=:60 \
+      --theme="${BAT_THEME:-Catppuccin Mocha}" "$readme" 2>/dev/null ||
+      head -60 "$readme"
+    return 0
+  done
 
-# worktree paths (<org>/<repo>/.worktrees/<branch>) name as org-repo-branch
-if [[ "$selected" == */.worktrees/* ]]; then
-  main_repo="${selected%/.worktrees/*}"
-  org_name=$(basename "$(dirname "$main_repo")")
-  repo_name=$(basename "$main_repo" | tr . _)
-  selected_name="${org_name}-${repo_name}-${base_name}"
-fi
+  if [[ ! -e $dir/.git ]]; then
+    printf '\n'
+    if command -v eza >/dev/null 2>&1; then
+      eza -1 --icons=always --color=always --group-directories-first "$dir" 2>/dev/null | head -40
+    else
+      ls -1 "$dir" | head -40
+    fi
+  fi
+}
 
-# overrides for generated session names
-if [[ "$base_name" == "_dotfiles" ]]; then
-  selected_name="dotfiles"
-elif [[ "$selected" == */.worktrees/* && $(basename "${selected%/.worktrees/*}") == ".dotfiles" ]]; then
-  selected_name="dotfiles-${base_name}"
-elif [[ "$base_name" == "_github" ]]; then
-  selected_name="${parent_name}-github"
-fi
+function preview_agent() {
+  local pane="$1" info session session_path window index cmd cwd state busy since detail transcript
+  local agent label columns lines used text
+  columns=${FZF_PREVIEW_COLUMNS:-80}
+  lines=${FZF_PREVIEW_LINES:-40}
 
-tmux_running=$(pgrep tmux)
+  info=$(tmux display-message -p -t "$pane" "$AGENT_FORMAT" 2>/dev/null)
+  [[ -n $info ]] || return 0
+  IFS="$US" read -r pane session session_path window index cmd cwd state busy since detail transcript <<<"$info"
+  is_agent "$cmd" || return 0
+  agent="$REPLY"
+  agent_state "$state" "$busy"
+  state="$REPLY"
+  agent_label "$cwd" "$session" "$session_path"
+  label="$REPLY"
 
-if [[ -z $TMUX && -z $tmux_running ]]; then
-  create_session "$selected_name" "$selected"
-  tmux attach-session -t "$selected_name"
-  exit 0
-fi
+  state_glyph "$state"
+  printf '%s %s%s%s %s%s%s%s  ' "$REPLY" "$MAUVE" "$ICON_AGENT" "$RESET" "$TEXT" "$BOLD" "$agent" "$RESET"
+  format_label "$label"
+  printf '%s' "$REPLY"
+  if [[ $label != *:* ]] && project_root "$cwd" && git_branch "$REPLY"; then
+    printf '   %s%s %s%s' "$MAUVE" "$ICON_BRANCH" "$REPLY" "$RESET"
+  fi
+  printf '\n'
+  used=1
+  if agent_title "$transcript"; then
+    printf '%s%s%s\n' "$TEXT" "$REPLY" "$RESET"
+    used=$((used + 1))
+  fi
+  tildify "$cwd"
+  printf '%s%s · %s:%s.%s' "$OVERLAY" "$REPLY" "$session" "$window" "$index"
+  if [[ $since =~ ^[0-9]+$ ]] && ((since > 0)); then
+    format_age "$since"
+    printf ' · %s ago' "$REPLY"
+  fi
+  printf '%s\n\n' "$RESET"
+  used=$((used + 2))
 
-# inside tmux or server already running
-if ! tmux has-session -t="$selected_name" 2>/dev/null; then
-  create_session "$selected_name" "$selected"
-fi
+  state_color "$state"
+  case "$state" in
+    waiting | error)
+      printf '%s' "$REPLY"
+      state_text "$state"
+      printf '%s%s' "$REPLY" "$RESET"
+      [[ -n $detail ]] && printf '%s: %s%s%s' "$OVERLAY" "$TEXT" "$detail" "$RESET"
+      ;;
+    done | working)
+      printf '%s' "$REPLY"
+      state_text "$state"
+      printf '%s%s' "$REPLY" "$RESET"
+      ;;
+    *) printf '%sidle%s' "$OVERLAY" "$RESET" ;;
+  esac
+  printf '\n'
+  used=$((used + 1))
+  if last_prompt "$transcript"; then
+    text="${REPLY//$'\n'/ }"
+    clip_text "$text" $((columns - 2))
+    printf '%s❯ %s%s\n' "$OVERLAY" "$REPLY" "$RESET"
+    used=$((used + 1))
+  fi
 
-tmux switch-client -t "$selected_name"
+  rule "$columns"
+  used=$((used + 1))
+  ((lines - used > 2)) || return 0
+  tmux capture-pane -ep -t "$pane" 2>/dev/null | trim_trailing_blank_lines | tail -n "$((lines - used))"
+  printf '%s' "$RESET"
+}
+
+function preview_legend() {
+  printf '%s◆%s needs you   %s▲%s failed   %s●%s done   %s%s%s working\n' \
+    "$RED" "$RESET" "$PEACH" "$RESET" "$YELLOW" "$RESET" "$BLUE" "$ICON_WORKING" "$RESET"
+}
+
+function render_preview() {
+  case "$1" in
+    session) preview_session "$2" ;;
+    agent) preview_agent "$2" ;;
+    dir) preview_directory "$2" ;;
+    header) preview_legend ;;
+  esac
+}
+
+# ------------------------------------------------------------------- script ---
+
+case "${1:-}" in
+  --candidates)
+    list_candidates "${2:-}"
+    ;;
+  --preview)
+    render_preview "${2:-}" "${3:-}"
+    ;;
+  --close-request)
+    close_request "${2:-}" "${3:-}" "${4:-}" "${5:-}"
+    ;;
+  --toggle-attention)
+    toggle_attention "${2:-}"
+    ;;
+  --toggle-view)
+    toggle_view "${2:-}"
+    ;;
+  --footer)
+    footer_for "${2:-}"
+    ;;
+  --home)
+    cursor_home "${2:-}"
+    ;;
+  --refresh-directories)
+    refresh_directories
+    ;;
+  -h | --help)
+    awk 'NR >= 5 && /^# credit:/ { exit } NR >= 5 { sub(/^# ?/, ""); print }' "$SCRIPT_PATH"
+    ;;
+  --agents)
+    pick agents || exit
+    ;;
+  "")
+    pick sessions || exit
+    ;;
+  *)
+    [[ -d $1 ]] || die "not a directory: $1"
+    open_session "$1"
+    ;;
+esac
+
+exit 0
