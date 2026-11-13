@@ -12,13 +12,21 @@ _darcs
 \.git
 \.gitignore
 \.gitmodules
+^/\.githooks
+^/\.gitleaks.*
 ^/\.secrets
+^/\.stowrc
+^/\.worktrees
 \.claude\.json.*
-^/\.opencode/bin
+__pycache__
+node_modules
+\.DS_Store
 
 .+~          # emacs backup files
 \#.*\#       # emacs autosave files
 
+^/Brewfile.*
 ^/README.*
 ^/LICENSE.*
 ^/COPYING
+^/tests
