@@ -1,10 +1,17 @@
 # environment variables and PATH
 
+typeset -U path fpath
+
+for brew_bin in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
+  [[ -x $brew_bin ]] && eval "$($brew_bin shellenv zsh)" && break
+done
+unset brew_bin
+
 export EDITOR=nvim
 export XDG_CACHE_HOME=${HOME}/.cache
 export XDG_CONFIG_HOME=${HOME}/.config
 export XDG_DATA_HOME=${HOME}/.local/share
-export PATH=${HOME}/.opencode/bin:/opt/nvim/bin:${HOME}/.local/bin:${HOME}/go/bin:${HOME}/.arkade/bin/:${PATH}
+path=(${HOME}/.opencode/bin ${HOME}/.local/bin ${HOME}/go/bin ${HOME}/.arkade/bin $path)
 
 export BAT_THEME="Catppuccin Mocha"
 export FZF_DEFAULT_OPTS=" \

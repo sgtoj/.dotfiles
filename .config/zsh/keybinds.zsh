@@ -10,13 +10,12 @@ bindkey -M viins '^p'  history-search-backward
 bindkey -M viins '^n'  history-search-forward
 bindkey -M viins '^[w' kill-region
 
-# fzf keybindings (ctrl-r history, ctrl-t files, alt-c cd)
+# fzf keybindings (ctrl-r history, ctrl-t files, alt-c cd) and completion
 # sourced after `bindkey -v` so bindings land in the vi keymaps
-if [[ -f "/opt/homebrew/opt/fzf/shell/key-bindings.zsh" ]]; then
-  source "/opt/homebrew/opt/fzf/shell/key-bindings.zsh"
-elif [[ -f "/usr/share/doc/fzf/examples/key-bindings.zsh" ]]; then
-  source "/usr/share/doc/fzf/examples/key-bindings.zsh"
+if command -v fzf >/dev/null 2>&1 && fzf_init=$(fzf --zsh 2>/dev/null); then
+  eval "$fzf_init"
 fi
+unset fzf_init
 
 # cursor
 function zle-keymap-select {

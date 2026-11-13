@@ -2,11 +2,6 @@
 
 eval "$(zoxide init --cmd cd zsh)"
 
-if [[ -f "/opt/homebrew/bin/brew" ]]; then
-  eval "$(/opt/homebrew/bin/brew shellenv)"
-  source "/opt/homebrew/opt/fzf/shell/completion.zsh"
-fi
-
 # zinit - load
 ZINIT_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}/zinit/zinit.git"
 if [ ! -d "${ZINIT_HOME}" ]; then
