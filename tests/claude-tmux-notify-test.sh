@@ -50,13 +50,21 @@ expect 'set|%7|waiting|demo|plan ready for review|question'
 hook '{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission"}'
 expect 'set|%7|waiting|demo|Claude needs your permission|permission'
 
+# Claude's Stop hook skips user interrupts, so the idle prompt ends a turn.
 hook '{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"Claude is waiting"}'
-expect ''
+expect 'idle|%7'
 
-for event in SessionStart UserPromptSubmit SessionEnd; do
-  hook "{\"hook_event_name\":\"$event\"}"
-  expect 'clear|%7'
-done
+hook '{"hook_event_name":"SessionStart","transcript_path":"/t/s.jsonl"}'
+expect $'reset|%7\ntranscript|%7|/t/s.jsonl'
+
+hook '{"hook_event_name":"SessionStart"}'
+expect 'reset|%7'
+
+hook '{"hook_event_name":"UserPromptSubmit","transcript_path":"/t/s.jsonl","prompt":"go"}'
+expect $'transcript|%7|/t/s.jsonl\nbusy|%7'
+
+hook '{"hook_event_name":"SessionEnd"}'
+expect 'reset|%7'
 
 # Claude sessions outside tmux must not touch any pane.
 : >"$log"

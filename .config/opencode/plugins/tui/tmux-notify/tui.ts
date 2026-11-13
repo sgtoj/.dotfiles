@@ -26,6 +26,9 @@ export default Plugin.define({
       notify(["set", pane, state, label, detail, sound, root(sessionID)])
     const clear = (sessionID?: string) =>
       notify(sessionID ? ["clear", pane, root(sessionID)] : ["clear", pane])
+    const busy = (sessionID: string) => notify(["busy", pane, root(sessionID)])
+    const idle = () => notify(["idle", pane])
+    const reset = () => notify(["reset", pane])
 
     // OpenCode 2 uses one background service for every terminal. Scope the shared event
     // stream to the session family displayed by this TUI so one pane cannot flag another.
@@ -79,7 +82,7 @@ export default Plugin.define({
     }
 
     // Remove a stale marker left by a previous TUI process in this pane.
-    clear()
+    reset()
 
     const stop = [
       context.data.on("permission.asked", (event) => {
@@ -91,12 +94,12 @@ export default Plugin.define({
         flag("waiting", event.data.form.sessionID, firstText(event.data.form.title, "asked a question"), "question")
       }),
       context.data.on("session.execution.started", (event) => {
-        if (tracks(event.data.sessionID)) clear(event.data.sessionID)
+        if (tracks(event.data.sessionID)) busy(event.data.sessionID)
       }),
       // Earlier V2 builds publish status/idle compatibility events instead of the
       // durable execution pair. Listening to both is safe because oc-notify deduplicates.
       context.data.on("session.status", (event) => {
-        if (tracks(event.data.sessionID) && event.data.status.type === "busy") clear(event.data.sessionID)
+        if (tracks(event.data.sessionID) && event.data.status.type === "busy") busy(event.data.sessionID)
       }),
       context.data.on("session.execution.succeeded", (event) => {
         if (currentRoot(event.data.sessionID)) flag("done", event.data.sessionID)
@@ -110,7 +113,10 @@ export default Plugin.define({
         }
       }),
       context.data.on("session.execution.interrupted", (event) => {
-        if (currentRoot(event.data.sessionID)) clear(event.data.sessionID)
+        if (currentRoot(event.data.sessionID)) {
+          clear(event.data.sessionID)
+          idle()
+        }
       }),
       context.data.on("permission.replied", (event) => {
         if (tracks(event.data.sessionID)) clear(event.data.sessionID)
@@ -125,7 +131,7 @@ export default Plugin.define({
 
     return () => {
       stop.forEach((unsubscribe) => unsubscribe())
-      clear()
+      reset()
     }
   },
 })

@@ -24,6 +24,7 @@ command -v jq >/dev/null 2>&1 || exit 0
   read -r kind
   read -r tool
   read -r detail
+  read -r transcript
 } < <(jq -r '
   def text($candidates):
     [$candidates[] | strings | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ") | select(. != "")]
@@ -40,7 +41,8 @@ command -v jq >/dev/null 2>&1 || exit 0
     text([.last_assistant_message, .error_details, .error])
   else
     text([.message])
-  end
+  end,
+  (.transcript_path // "" | gsub("[\\r\\n]"; ""))
 ' 2>/dev/null)
 
 label="$(basename -- "${CLAUDE_PROJECT_DIR:-$PWD}")"
@@ -50,8 +52,16 @@ flag() {
 }
 
 case "${event:-}" in
-  SessionStart | SessionEnd | UserPromptSubmit)
-    exec "$NOTIFY" clear "$TMUX_PANE"
+  SessionStart)
+    "$NOTIFY" reset "$TMUX_PANE"
+    [ -n "${transcript:-}" ] && exec "$NOTIFY" transcript "$TMUX_PANE" "$transcript"
+    ;;
+  SessionEnd)
+    exec "$NOTIFY" reset "$TMUX_PANE"
+    ;;
+  UserPromptSubmit)
+    [ -n "${transcript:-}" ] && "$NOTIFY" transcript "$TMUX_PANE" "$transcript"
+    exec "$NOTIFY" busy "$TMUX_PANE"
     ;;
   PermissionRequest)
     # AskUserQuestion and plan approval reach the user as permission dialogs.
@@ -67,6 +77,7 @@ case "${event:-}" in
     case "$kind" in
       permission_prompt) flag waiting "${detail:-needs permission}" permission ;;
       elicitation_dialog | elicitation_url_dialog) flag waiting "${detail:-asked a question}" question ;;
+      idle_prompt) exec "$NOTIFY" idle "$TMUX_PANE" ;;
     esac
     ;;
   Stop)

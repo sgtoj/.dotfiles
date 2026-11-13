@@ -12,6 +12,10 @@
 #   @oc_win    window-scoped, highest severity in that window (drives the window marker)
 #   @oc_alert  global, pre-rendered badges, empty when nothing is waiting
 #   @oc_session pane-scoped OpenCode 2 root session to open for the alert
+#   @oc_busy   pane-scoped, 1 while the agent is working on a turn
+#   @oc_since  pane-scoped, epoch seconds of the agent's last state change
+#   @oc_detail pane-scoped, what the flagged agent is asking or why it failed
+#   @oc_transcript pane-scoped, the Claude Code transcript, for session titles
 #
 # @oc_alert is the first element of status-right. status-right is right-aligned, so it
 # grows leftward into unused space and the existing right-hand widgets never move.
@@ -23,6 +27,10 @@
 # Usage:
 #   oc-notify set <pane> <waiting|done|error> <label> [detail] [sound] [session]
 #   oc-notify clear <pane> [session]
+#   oc-notify busy <pane> [session]  # a turn started: clear the flag, mark working
+#   oc-notify idle <pane>            # a turn ended without a flag, e.g. interrupted
+#   oc-notify reset <pane>           # the agent started or exited
+#   oc-notify transcript <pane> <path>
 #   oc-notify jump                 # focus the most urgent flagged pane
 #   oc-notify jump-to <pane>       # focus one pane
 #   oc-notify session <pane>        # print the alerted OpenCode 2 root session
@@ -41,6 +49,10 @@ OPT="@oc_state"
 SESSION_OPT="@oc_session"
 WOPT="@oc_win"
 ALERT_OPT="@oc_alert"
+BUSY_OPT="@oc_busy"
+SINCE_OPT="@oc_since"
+DETAIL_OPT="@oc_detail"
+TRANSCRIPT_OPT="@oc_transcript"
 SOUND_CMD="${HOME}/.dotfiles/.local/bin/oc-sound"
 
 # A tmux client refuses to talk to a server built from a different major version, so the
@@ -184,16 +196,18 @@ build_alert() {
 # Rebuild every derived display option from pane state, dropping flags for panes where
 # the agent has since exited so dead sessions self-heal.
 refresh() {
-  local pane st win cmd flagged="" nwait=0 nerr=0 ndone=0
+  local pane st win cmd busy flagged="" nwait=0 nerr=0 ndone=0
 
-  while IFS='|' read -r pane st win cmd; do
+  while IFS='|' read -r pane st win cmd busy; do
     [ -n "${pane:-}" ] || continue
-    [ -n "${st:-}" ] || continue
+    [ -n "${st:-}${busy:-}" ] || continue
 
     if ! is_agent "$cmd"; then
-      $TMUX_BIN set-option -pu -t "$pane" "$OPT" 2>/dev/null
+      [ -n "${st:-}" ] && $TMUX_BIN set-option -pu -t "$pane" "$OPT" 2>/dev/null
+      [ -n "${busy:-}" ] && $TMUX_BIN set-option -pu -t "$pane" "$BUSY_OPT" 2>/dev/null
       continue
     fi
+    [ -n "${st:-}" ] || continue
 
     flagged="$flagged$win|$st
 "
@@ -202,7 +216,7 @@ refresh() {
       error) nerr=$((nerr + 1)) ;;
       done) ndone=$((ndone + 1)) ;;
     esac
-  done < <($TMUX_BIN list-panes -a -F "#{pane_id}|#{${OPT}}|#{window_id}|#{pane_current_command}" 2>/dev/null)
+  done < <($TMUX_BIN list-panes -a -F "#{pane_id}|#{${OPT}}|#{window_id}|#{pane_current_command}|#{${BUSY_OPT}}" 2>/dev/null)
 
   # per-window marker: highest severity among that window's flagged panes
   local cur want wr r lw lst
@@ -280,8 +294,11 @@ cmd_set() {
   # target and just prints nothing, so test the output rather than the status.
   [ -n "$($TMUX_BIN display-message -p -t "$pane" '#{pane_id}' 2>/dev/null)" ] || exit 0
 
+  [ "$state" = "waiting" ] || unset_busy "$pane"
+
   # Already being watched, so there is nothing to draw attention to.
   if watching "$pane"; then
+    stamp "$pane"
     cmd_clear "$pane"
     return 0
   fi
@@ -295,8 +312,62 @@ cmd_set() {
 
   $TMUX_BIN set-option -p -t "$pane" "$OPT" "$state" 2>/dev/null || exit 0
   [ -n "$session" ] && $TMUX_BIN set-option -p -t "$pane" "$SESSION_OPT" "$session" 2>/dev/null
+  if [ -n "$detail" ]; then
+    $TMUX_BIN set-option -p -t "$pane" "$DETAIL_OPT" "$detail" 2>/dev/null
+  else
+    $TMUX_BIN set-option -pu -t "$pane" "$DETAIL_OPT" 2>/dev/null
+  fi
+  stamp "$pane"
   refresh
   announce "$pane" "$state" "$label" "$detail" "$sound"
+}
+
+stamp() {
+  $TMUX_BIN set-option -p -t "$1" "$SINCE_OPT" "$(date +%s)" 2>/dev/null
+}
+
+unset_busy() {
+  local busy
+  busy="$($TMUX_BIN show-options -pqv -t "$1" "$BUSY_OPT" 2>/dev/null)" || busy=""
+  [ -n "$busy" ] || return 1
+  $TMUX_BIN set-option -pu -t "$1" "$BUSY_OPT" 2>/dev/null
+}
+
+cmd_busy() {
+  local pane="${1:-}" session="${2:-}" busy
+  [ -n "$pane" ] || die "busy: pane required"
+  [ -n "$($TMUX_BIN display-message -p -t "$pane" '#{pane_id}' 2>/dev/null)" ] || exit 0
+  busy="$($TMUX_BIN show-options -pqv -t "$pane" "$BUSY_OPT" 2>/dev/null)" || busy=""
+  if [ -z "$busy" ]; then
+    $TMUX_BIN set-option -p -t "$pane" "$BUSY_OPT" 1 2>/dev/null
+    stamp "$pane"
+  fi
+  cmd_clear "$pane" "$session"
+}
+
+cmd_idle() {
+  local pane="${1:-}"
+  [ -n "$pane" ] || die "idle: pane required"
+  unset_busy "$pane" && stamp "$pane"
+  return 0
+}
+
+cmd_reset() {
+  local pane="${1:-}"
+  [ -n "$pane" ] || die "reset: pane required"
+  [ -n "$($TMUX_BIN display-message -p -t "$pane" '#{pane_id}' 2>/dev/null)" ] || exit 0
+  $TMUX_BIN set-option -pu -t "$pane" "$BUSY_OPT" 2>/dev/null
+  $TMUX_BIN set-option -pu -t "$pane" "$TRANSCRIPT_OPT" 2>/dev/null
+  stamp "$pane"
+  cmd_clear "$pane"
+}
+
+cmd_transcript() {
+  local pane="${1:-}" path="${2:-}"
+  [ -n "$pane" ] || die "transcript: pane required"
+  [ -n "$path" ] || return 0
+  $TMUX_BIN set-option -p -t "$pane" "$TRANSCRIPT_OPT" "$path" 2>/dev/null
+  return 0
 }
 
 cmd_clear() {
@@ -316,6 +387,7 @@ cmd_clear() {
   fi
 
   $TMUX_BIN set-option -pu -t "$pane" "$OPT" 2>/dev/null
+  $TMUX_BIN set-option -pu -t "$pane" "$DETAIL_OPT" 2>/dev/null
   refresh
 }
 
@@ -378,13 +450,17 @@ main() {
   case "$sub" in
     set) cmd_set "$@" ;;
     clear) cmd_clear "$@" ;;
+    busy) cmd_busy "$@" ;;
+    idle) cmd_idle "$@" ;;
+    reset) cmd_reset "$@" ;;
+    transcript) cmd_transcript "$@" ;;
     focus) cmd_focus "$@" ;;
     jump) cmd_jump ;;
     jump-to) cmd_jump_to "$@" ;;
     refresh) refresh ;;
     session) cmd_session "$@" ;;
     *)
-      printf 'usage: oc-notify {set <pane> <state> <label> [detail] [sound] [session]|clear <pane> [session]|focus <pane>|jump|jump-to <pane>|refresh|session <pane>}\n' >&2
+      printf 'usage: oc-notify {set <pane> <state> <label> [detail] [sound] [session]|clear <pane> [session]|busy <pane> [session]|idle <pane>|reset <pane>|transcript <pane> <path>|focus <pane>|jump|jump-to <pane>|refresh|session <pane>}\n' >&2
       exit 2
       ;;
   esac
