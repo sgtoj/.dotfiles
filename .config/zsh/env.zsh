@@ -17,6 +17,7 @@ export FZF_DEFAULT_OPTS=" \
 
 export TELEPORT_TOOLS_VERSION=off
 export ATMOS_TELEMETRY_ENABLED=false
+export ATMOS_TOOLCHAIN_INSTALL_PATH=${XDG_CACHE_HOME}/atmos/toolchain
 export SHELLCHECK_OPTS='-S warning'
 
 # Keep internal MCP endpoints outside the shared dotfiles configuration.
