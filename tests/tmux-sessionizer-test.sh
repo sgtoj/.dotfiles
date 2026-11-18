@@ -36,7 +36,7 @@ cat >"$bin/fzf" <<'EOF'
 #!/usr/bin/env bash
 if [[ ${1:-} == --help ]]; then
   case ${FZF_PROFILE:-legacy} in
-  modern) printf '%s\n' '--footer --sync --track --listen=SOCKET_PATH' ;;
+  modern) printf '%s\n' '--footer --sync --track --no-input' ;;
   *) printf '%s\n' 'legacy fzf' ;;
   esac
   exit 0
@@ -51,26 +51,30 @@ log="$tmp/fzf.log"
 input="$tmp/fzf-input"
 path="$bin:/usr/bin:/bin"
 
-# A legacy distro fzf must still open with directories on a fresh cache.
+# A legacy distro fzf must still open with directories on a fresh cache, as a
+# plain search-only picker.
 HOME="$home" XDG_CACHE_HOME="$tmp/legacy-cache" PATH="$path" FZF_LOG="$log" FZF_INPUT="$input" FZF_PROFILE=legacy \
   "$sessionizer"
 cut -f5 "$input" | grep -qx "$home/.dotfiles"
-grep -q -- '--listen' "$log" && {
-  printf '%s\n' 'legacy fzf unexpectedly received --listen' >&2
-  exit 1
-}
-grep -q -- '--footer' "$log" && {
-  printf '%s\n' 'legacy fzf unexpectedly received --footer' >&2
-  exit 1
-}
+for option in --footer --no-input; do
+  grep -q -- "$option" "$log" && {
+    printf 'legacy fzf unexpectedly received %s\n' "$option" >&2
+    exit 1
+  }
+done
 
+# The full picker opens for browsing (j/k, / to search) and keeps open sessions
+# above projects while searching.
 : >"$log"
 HOME="$home" XDG_CACHE_HOME="$tmp/modern-cache" PATH="$path" FZF_LOG="$log" FZF_INPUT="$input" FZF_PROFILE=modern \
   "$sessionizer"
 [[ -s "$tmp/modern-cache/tmux-sessionizer/projects" ]]
 cut -f5 "$input" | grep -qx "$home/.dotfiles"
-grep -q -- '--listen=' "$log"
 grep -q -- '--footer=' "$log"
+grep -q -- '--no-input' "$log"
+grep -q -- '--bind=j:down' "$log"
+grep -q -- '--no-sort' "$log"
+grep -q -- 'j/k move · / search' "$log"
 
 # Sessions sort by agent urgency, then label. The current session is hidden,
 # a flag on a pane whose agent exited is ignored, and project directories that
@@ -152,6 +156,15 @@ order=$(agent_rows "$picker" | awk -F'\t' '{ print $4 ":" $5 }' | tr '\n' ' ')
 }
 printf 'sessions\n' >"$picker/view"
 
+# The agents view starts browsing: no input, j/k move, / searches.
+: >"$log"
+HOME="$home" XDG_CACHE_HOME="$tmp/modern-cache" PATH="$path" FZF_LOG="$log" FZF_INPUT="$input" FZF_PROFILE=modern \
+  TMUX_AGENTS_FILE="$agents" "$sessionizer" --agents
+grep -q -- '--no-input' "$log"
+grep -q -- '--bind=j:down' "$log"
+grep -q -- '--bind=/:transform:' "$log"
+grep -q -- 'j/k move · / search' "$log"
+
 # After every result update the cursor goes to the best match while typing,
 # else to the first row under the section header.
 home_for() {
@@ -163,6 +176,23 @@ printf 'attention\n' >"$picker/mode"
 [[ $(home_for "") == "first" && $(home_for doc) == "first" ]]
 grep -q -- '--track' "$log" && {
   printf '%s\n' '--track keeps the cursor on a mid-list row while typing' >&2
+  exit 1
+}
+
+# Long repo, worktree, and branch names are clipped so every row of a kind
+# keeps the same column widths.
+long="terraform-aws-cognito-custom-message-sender-with-a-very-long-name"
+mkdir -p "$home/repos/cs/$long/.worktrees/ci-use-cruxstack-release-actions" "$home/repos/cs/$long-two"
+printf '%s\n' "wide${us}$home/repos/cs/$long${us}1${us}1${us}1${us}${us}zsh" >>"$panes"
+HOME="$home" XDG_CACHE_HOME="$tmp/modern-cache" PATH="$path" "$sessionizer" --refresh-directories
+printf 'all\n' >"$picker/mode"
+widths=$(candidates "$picker" | perl -CSD -F'\t' -lane '
+  next if $F[3] eq "header";
+  ($name = $F[1]) =~ s/\e\[[0-9;]*m//g;
+  print "$F[3] " . length($name);
+' | sort -u | awk '{ print $1 }' | uniq -d)
+[[ -z $widths ]] || {
+  printf 'rows of these kinds have uneven name columns: %s\n' "$widths" >&2
   exit 1
 }
 

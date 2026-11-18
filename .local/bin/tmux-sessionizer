@@ -13,14 +13,18 @@
 # - agents: every claude and opencode pane (excluding the current one), most
 #   urgent first, with what it is asking or working on
 #
+# both views open for browsing: j/k move and enter opens; / starts a search
+# that keeps the list order, and esc goes back to browsing. the footer lists
+# the other keys
+#
 # usage:
-#   tmux-sessionizer           pick, then open or switch to a session
-#   tmux-sessionizer --agents  start in the agents view
+#   tmux-sessionizer           pick from the sessions view
+#   tmux-sessionizer --agents  pick from the agents view
 #   tmux-sessionizer DIR       open DIR as a session, then switch to it
 #
 # agent status comes from the @oc_* pane options kept by oc-notify. fzf 0.62+
-# gets the full picker; an older fzf gets a plain one without tab, ctrl-x and
-# ctrl-a.
+# gets the full picker; an older fzf gets a plain search-only one without tab,
+# ctrl-x and ctrl-a.
 #
 # credit:
 # - script is based on a script written by primeagen
@@ -30,16 +34,21 @@
 
 set -uo pipefail
 
+if [[ ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} != *[Uu][Tt][Ff]* ]]; then
+  unset LC_ALL
+  export LC_CTYPE=C.UTF-8
+fi
+
 SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
 printf -v SELF '%q' "$SCRIPT_PATH"
 NOTIFY="${SCRIPT_PATH%/*}/oc-notify"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/tmux-sessionizer"
 DIRECTORY_CACHE="$CACHE_DIR/projects"
-REFRESH_DELAY=0.25
 CLOSE_CONFIRM_SECONDS=3
 LABEL_WIDTH_MAX=40
-FOOTER_SESSIONS="enter open · alt-enter open as window · ctrl-x close session · ctrl-a needs attention · tab agents · ctrl-r refresh · ctrl-/ preview"
-FOOTER_AGENTS="enter jump · ctrl-x close agent · ctrl-a needs attention · tab sessions · ctrl-r refresh · ctrl-/ preview"
+BRANCH_WIDTH_MAX=20
+PROJECT_WIDTH_MAX=48
+BROWSE_KEYS="j,k,q,/"
 PLAIN_HEADER_SESSIONS="enter open · alt-enter open as window · ctrl-r refresh · ctrl-/ preview"
 PLAIN_HEADER_AGENTS="enter jump · ctrl-r refresh · ctrl-/ preview"
 DETAIL_WIDTH_MAX=60
@@ -76,8 +85,10 @@ US=$'\x1f'
 
 if stat -c '%Y' / >/dev/null 2>&1; then
   STAT_MTIME=(stat -c '%Y')
+  STAT_NAMED=(stat -c '%Y %n')
 else
   STAT_MTIME=(stat -f '%m')
+  STAT_NAMED=(stat -f '%m %N')
 fi
 
 NOW=${EPOCHSECONDS:-$(date +%s)}
@@ -249,6 +260,22 @@ function clip_text() {
   local text="${1//$'\t'/ }" width="$2"
   ((${#text} > width)) && text="${text:0:$((width - 1))}…"
   REPLY="$text"
+}
+
+# fit org/repo:branch into width, shortening the branch before the repo
+function clip_label() {
+  local label="$1" width="$2" head
+  if ((${#label} <= width)); then
+    REPLY="$label"
+    return
+  fi
+  head="${label%%:*}"
+  if [[ $label == *:* ]] && ((${#head} + 3 <= width)); then
+    clip_text "${label#*:}" $((width - ${#head} - 1))
+    REPLY="${head}:${REPLY}"
+    return
+  fi
+  clip_text "$label" "$width"
 }
 
 # "needs you: Bash(terraform plan)", "working · Fix token refresh race"
@@ -506,11 +533,36 @@ function directory_timestamp() {
   printf '0\n'
 }
 
+# directory_timestamp for every project, with one stat call for all of them:
+# each spec line is a directory and its candidate files, best first
+read -r -d '' AWK_NEWEST <<'AWK'
+$0 == "\036" { specs = 1; next }
+!specs { time = $0; sub(/ .*/, "", time); path = $0; sub(/^[^ ]+ /, "", path); mtime[path] = time; next }
+{
+  time = 0
+  for (i = 2; i <= NF; i++) if ($i in mtime) { time = mtime[$i]; break }
+  print time "\t" $1
+}
+AWK
+
 function build_directory_cache() {
-  local dir
-  while IFS= read -r dir; do
-    printf '%s\t%s\n' "$(directory_timestamp "$dir")" "$dir"
-  done < <(list_search_directories) | sort -t $'\t' -k1,1nr
+  local dir specs
+  local -a fields paths=()
+  specs=$(list_search_directories | while IFS= read -r dir; do
+    if [[ $dir == */.worktrees/* ]]; then
+      printf '%s\t%s\t%s\n' "$dir" "${dir%/.worktrees/*}/.git/worktrees/${dir##*/}/HEAD" "$dir"
+    else
+      printf '%s\t%s\t%s\t%s\n' "$dir" "$dir/.git/FETCH_HEAD" "$dir/.git/HEAD" "$dir"
+    fi
+  done)
+  [[ -n $specs ]] || return 0
+  while IFS=$'\t' read -r -a fields; do
+    paths+=("${fields[@]:1}")
+  done <<<"$specs"
+  {
+    "${STAT_NAMED[@]}" "${paths[@]}" 2>/dev/null
+    printf '\036\n%s\n' "$specs"
+  } | awk -F'\t' "$AWK_NEWEST" | sort -t $'\t' -k1,1nr
 }
 
 function refresh_directories() {
@@ -519,25 +571,6 @@ function refresh_directories() {
   temp=$(mktemp "$CACHE_DIR/projects.XXXXXX") || return
   build_directory_cache >"$temp"
   mv "$temp" "$DIRECTORY_CACHE"
-}
-
-function reload_candidates() {
-  local socket="$1" picker_dir="$2" attempt
-  local -a auth=()
-  for ((attempt = 0; attempt < 20; attempt++)); do
-    [[ -S $socket ]] && break
-    sleep 0.05
-  done
-  [[ -S $socket ]] || return
-  [[ -n ${FZF_API_KEY:-} ]] && auth=(-H "x-api-key: $FZF_API_KEY")
-  curl --unix-socket "$socket" --fail --silent --max-time 1 --request POST ${auth[@]+"${auth[@]}"} \
-    --data "reload($SELF --candidates $picker_dir)" http >/dev/null 2>&1 || true
-}
-
-function refresh_in_background() {
-  sleep "$REFRESH_DELAY"
-  refresh_directories
-  reload_candidates "$1" "$2"
 }
 
 # ----------------------------------------------------------------- sessions ---
@@ -664,8 +697,36 @@ function picker_mode() {
   [[ -n ${1:-} && -r $1/mode ]] && REPLY=$(<"$1/mode")
 }
 
+# the keys that work right now; a picker started in browse mode hides the
+# input and moves with j/k until / starts a search
 function view_footer() {
-  if [[ $1 == agents ]]; then REPLY="$FOOTER_AGENTS"; else REPLY="$FOOTER_SESSIONS"; fi
+  local view="$1" picker_dir="${2:-}" input="${3:-${FZF_INPUT_STATE:-enabled}}"
+  if [[ $view == agents ]]; then REPLY="enter jump"; else REPLY="enter open · alt-enter open as window"; fi
+  if [[ -n $picker_dir && -e $picker_dir/browse ]]; then
+    if [[ $input == hidden ]]; then REPLY+=" · j/k move · / search"; else REPLY+=" · esc back"; fi
+  fi
+  if [[ $view == agents ]]; then REPLY+=" · ctrl-x close agent"; else REPLY+=" · ctrl-x close session"; fi
+  REPLY+=" · ctrl-a needs attention"
+  if [[ $view == agents ]]; then REPLY+=" · tab sessions"; else REPLY+=" · tab agents"; fi
+  REPLY+=" · ctrl-r refresh · ctrl-/ preview"
+}
+
+function start_search() {
+  picker_view "$1"
+  view_footer "$REPLY" "$1" enabled
+  printf 'show-input+unbind(%s)+change-footer:%s' "$BROWSE_KEYS" "$REPLY"
+}
+
+# esc leaves a search for browsing, else closes the picker. the binding clears
+# the query itself: fzf ignores clear-query when a transform returns it
+function escape_key() {
+  if [[ ${FZF_INPUT_STATE:-} != enabled ]]; then
+    printf 'abort'
+    return
+  fi
+  picker_view "$1"
+  view_footer "$REPLY" "$1" hidden
+  printf 'hide-input+rebind(%s)+change-footer:%s' "$BROWSE_KEYS" "$REPLY"
 }
 
 function view_label() {
@@ -695,7 +756,7 @@ function list_candidates() {
 }
 
 function list_session_rows() {
-  local picker_dir="${1:-}" mode="all" current="" rank label name path windows state app program
+  local picker_dir="${1:-}" mode="all" current="" rank label shown name path windows state app program
   local dir branch ts row details plural display
   local label_width=0 branch_width=0 project_width=0 rule_width
   local open_dirs=$'\n' open_labels=$'\n'
@@ -716,10 +777,18 @@ function list_session_rows() {
     [[ $name == "$current" ]] && continue
     [[ $mode == attention ]] && ! needs_attention "$state" && continue
     branch=""
-    [[ $label != *:* && -n $path ]] && git_branch "$path" && branch="$REPLY"
-    ((${#label} > label_width)) && label_width=${#label}
+    if [[ $label == *:* ]]; then
+      branch="${label#*:}"
+    elif [[ -n $path ]] && git_branch "$path"; then
+      branch="$REPLY"
+    fi
+    clip_text "$branch" "$BRANCH_WIDTH_MAX"
+    branch="$REPLY"
+    clip_text "${label%%:*}" "$LABEL_WIDTH_MAX"
+    shown="$REPLY"
+    ((${#shown} > label_width)) && label_width=${#shown}
     ((${#branch} > branch_width)) && branch_width=${#branch}
-    session_rows+=("${name}${US}${label}${US}${state}${US}${app}${US}${windows}${US}${program}${US}${branch}")
+    session_rows+=("${name}${US}${label}${US}${shown}${US}${state}${US}${app}${US}${windows}${US}${program}${US}${branch}")
   done < <(list_sessions)
 
   if [[ $mode != attention && -r $DIRECTORY_CACHE ]]; then
@@ -729,14 +798,13 @@ function list_session_rows() {
       label_for "$dir"
       label="$REPLY"
       [[ $open_labels == *$'\n'"$label"$'\n'* ]] && continue
-      ((${#label} > project_width)) && project_width=${#label}
-      dir_rows+=("${ts}${US}${dir}${US}${label}")
+      clip_label "$label" "$PROJECT_WIDTH_MAX"
+      shown="$REPLY"
+      ((${#shown} > project_width)) && project_width=${#shown}
+      dir_rows+=("${ts}${US}${dir}${US}${label}${US}${shown}")
     done <"$DIRECTORY_CACHE"
   fi
 
-  ((label_width > LABEL_WIDTH_MAX)) && label_width=$LABEL_WIDTH_MAX
-  ((branch_width > 20)) && branch_width=20
-  ((project_width > LABEL_WIDTH_MAX + 8)) && project_width=$((LABEL_WIDTH_MAX + 8))
   rule_width=$((label_width + branch_width + 32))
   ((project_width + 8 > rule_width)) && rule_width=$((project_width + 8))
   ((rule_width > 72)) && rule_width=72
@@ -744,13 +812,13 @@ function list_session_rows() {
   if ((${#session_rows[@]})); then
     [[ $mode == attention ]] || section_header "Sessions" "${#session_rows[@]}" "$rule_width"
     for row in "${session_rows[@]}"; do
-      IFS="$US" read -r name label state app windows program branch <<<"$row"
+      IFS="$US" read -r name label shown state app windows program branch <<<"$row"
       state_glyph "$state"
       printf ' %s %s%s%s\t' "$REPLY" "$TEAL" "$ICON_SESSION" "$RESET"
 
-      format_label "$label"
+      format_label "$shown"
       display="$REPLY"
-      pad "$label" "$label_width"
+      pad "$shown" "$label_width"
       display+="$REPLY"
       if ((branch_width)); then
         pad "$branch" "$branch_width"
@@ -759,7 +827,7 @@ function list_session_rows() {
 
       plural="s"
       ((windows == 1)) && plural=" "
-      details="${OVERLAY}${windows} window${plural}${RESET}  "
+      printf -v details '%s%2d window%s%s  ' "$OVERLAY" "$windows" "$plural" "$RESET"
       status_label "$state" "$app" "$program"
       details+="$REPLY"
 
@@ -770,15 +838,15 @@ function list_session_rows() {
   if ((${#dir_rows[@]})); then
     section_header "Projects" "${#dir_rows[@]}" "$rule_width"
     for row in "${dir_rows[@]}"; do
-      IFS="$US" read -r ts dir label <<<"$row"
+      IFS="$US" read -r ts dir label shown <<<"$row"
       dir_icon "$dir"
       printf '   %s\t' "$REPLY"
-      format_label "$label"
+      format_label "$shown"
       display="$REPLY"
-      pad "$label" "$project_width"
+      pad "$shown" "$project_width"
       display+="$REPLY"
       format_age "$ts"
-      printf '%s\t %s%3s%s\tdir\t%s\t%s\n' "$display" "$OVERLAY" "$REPLY" "$RESET" "$dir" "$label"
+      printf '%s\t %s%4s%s\tdir\t%s\t%s\n' "$display" "$OVERLAY" "$REPLY" "$RESET" "$dir" "$label"
     done
   fi
 }
@@ -786,7 +854,7 @@ function list_session_rows() {
 # every claude and opencode pane: most urgent first, then most recent change
 function list_agent_rows() {
   local picker_dir="${1:-}" mode="all" current="" pane session session_path window index cmd cwd
-  local state busy since detail transcript agent label title rank display age
+  local state busy since detail transcript agent label shown title rank display age
   local agent_width=0 label_width=0 rule_width
   local -a rows=()
 
@@ -812,31 +880,32 @@ function list_agent_rows() {
     title=""
     agent_title "$transcript" && title="$REPLY"
     [[ $since =~ ^[0-9]+$ ]] || since=0
+    clip_label "$label" "$LABEL_WIDTH_MAX"
+    shown="$REPLY"
     ((${#agent} > agent_width)) && agent_width=${#agent}
-    ((${#label} > label_width)) && label_width=${#label}
-    rows+=("${rank}${US}${since}${US}${pane}${US}${agent}${US}${label}${US}${state}${US}${detail//$US/ }${US}${title//$US/ }")
+    ((${#shown} > label_width)) && label_width=${#shown}
+    rows+=("${rank}${US}${since}${US}${pane}${US}${agent}${US}${label}${US}${shown}${US}${state}${US}${detail//$US/ }${US}${title//$US/ }")
   done < <(tmux list-panes -a -F "$AGENT_FORMAT" 2>/dev/null)
 
   ((${#rows[@]})) || return 0
-  ((label_width > LABEL_WIDTH_MAX)) && label_width=$LABEL_WIDTH_MAX
   rule_width=$((agent_width + label_width + 32))
   ((rule_width > 72)) && rule_width=72
 
   [[ $mode == attention ]] || section_header "Agents" "${#rows[@]}" "$rule_width"
   printf '%s\n' "${rows[@]}" | LC_ALL=C sort -t "$US" -k1,1nr -k2,2nr |
-    while IFS="$US" read -r rank since pane agent label state detail title; do
+    while IFS="$US" read -r rank since pane agent label shown state detail title; do
       state_glyph "$state"
       printf ' %s %s%s%s\t' "$REPLY" "$MAUVE" "$ICON_AGENT" "$RESET"
       pad "$agent" "$agent_width"
       display="${TEXT}${agent}${RESET}${REPLY}  "
-      format_label "$label"
+      format_label "$shown"
       display+="$REPLY"
-      pad "$label" "$label_width"
+      pad "$shown" "$label_width"
       display+="$REPLY"
       age=""
       ((since > 0)) && format_age "$since" && age="$REPLY"
       agent_status "$state" "$detail" "$title"
-      printf '%s\t %s%3s%s  %s\tagent\t%s\t%s in %s\n' \
+      printf '%s\t %s%4s%s  %s\tagent\t%s\t%s in %s\n' \
         "$display" "$OVERLAY" "$age" "$RESET" "$REPLY" "$pane" "$agent" "$label"
     done
 }
@@ -860,7 +929,7 @@ function close_request() {
     fi
     printf -v picker_q '%q' "$picker_dir"
     picker_view "$picker_dir"
-    view_footer "$REPLY"
+    view_footer "$REPLY" "$picker_dir"
     printf 'reload-sync(%s --candidates %s)+change-footer:%s' "$SELF" "$picker_q" "$REPLY"
   else
     printf '%s\t%s\n' "$target" "$NOW" >"$picker_dir/close"
@@ -892,14 +961,14 @@ function toggle_view() {
   label="$REPLY"
   view_ghost "$view"
   ghost="$REPLY"
-  view_footer "$view"
+  view_footer "$view" "$picker_dir"
   printf 'reload-sync(%s --candidates %s)+change-list-label(%s)+change-ghost(%s)+change-footer:%s' \
     "$SELF" "$picker_q" "$label" "$ghost" "$REPLY"
 }
 
 function footer_for() {
   picker_view "$1"
-  view_footer "$REPLY"
+  view_footer "$REPLY" "$1"
   printf '%s' "$REPLY"
 }
 
@@ -916,11 +985,11 @@ function cursor_home() {
 }
 
 function run_picker() {
-  local view="${1:-sessions}" fzf_path help full=0 picker_dir picker_q current socket label ghost footer
+  local view="${1:-sessions}" fzf_path help full=0 picker_dir picker_q current label ghost footer
   local -a args
   fzf_path=$(get_fzf_path) || return 2
   help=$("$fzf_path" --help 2>&1)
-  [[ $help == *--footer* && $help == *--listen=SOCKET_PATH* ]] && full=1
+  [[ $help == *--footer* ]] && full=1
 
   picker_dir=$(mktemp -d "${TMPDIR:-/tmp}/tmux-sessionizer.XXXXXX") || return 2
   printf -v picker_q '%q' "$picker_dir"
@@ -933,17 +1002,14 @@ function run_picker() {
 
   tmux set-option -gu @sessionizer_closing 2>/dev/null
   reap_dead_sessions "$current"
-  if ((full)); then
-    [[ -s $DIRECTORY_CACHE ]] || refresh_directories
-  else
-    refresh_directories
-  fi
+  refresh_directories
   list_candidates "$picker_dir" >"$picker_dir/candidates"
   [[ -s $picker_dir/candidates ]] || return 1
 
   args=(
     --ansi
     --no-multi
+    --no-sort
     --sync
     --delimiter=$'\t'
     --with-nth=1..3
@@ -954,18 +1020,27 @@ function run_picker() {
     --prompt='❯ '
     --pointer='▌'
     --preview="$SELF --preview {4} {5}"
-    --bind="ctrl-r:reload($SELF --candidates $picker_q)"
+    --bind="ctrl-r:reload($SELF --refresh-directories; $SELF --candidates $picker_q)"
     --bind='ctrl-/:toggle-preview'
   )
   [[ -n ${TMUX:-} && $help == *--tmux* ]] && args+=("--tmux=center,90%,80%")
 
   if ((full)); then
+    : >"$picker_dir/browse"
+    args+=(
+      --no-input
+      --bind='j:down'
+      --bind='k:up'
+      --bind='q:abort'
+      --bind="/:transform:$SELF --search $picker_q"
+      --bind="esc:clear-query+transform:$SELF --escape $picker_q"
+    )
+    view_footer "$view" "$picker_dir" hidden
+    footer="$REPLY"
     view_label "$view" all
     label="$REPLY"
     view_ghost "$view"
     ghost="$REPLY"
-    view_footer "$view"
-    footer="$REPLY"
     args+=(
       --ellipsis='…'
       --style=full:rounded
@@ -986,12 +1061,6 @@ function run_picker() {
       --bind="ctrl-x:transform:$SELF --close-request $picker_q {4} {5} {6}"
       --bind="ctrl-a:transform:$SELF --toggle-attention $picker_q"
     )
-    socket="$picker_dir/fzf.sock"
-    args+=("--listen=$socket")
-    (
-      trap - EXIT
-      refresh_in_background "$socket" "$picker_q"
-    ) >/dev/null 2>&1 &
   elif [[ $view == agents ]]; then
     args+=(--header="$PLAIN_HEADER_AGENTS" --preview-window='right,55%')
   else
@@ -1270,6 +1339,12 @@ case "${1:-}" in
     ;;
   --footer)
     footer_for "${2:-}"
+    ;;
+  --search)
+    start_search "${2:-}"
+    ;;
+  --escape)
+    escape_key "${2:-}"
     ;;
   --home)
     cursor_home "${2:-}"
